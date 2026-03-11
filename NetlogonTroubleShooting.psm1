@@ -653,7 +653,9 @@ function Read-NetlogonDebugLog {
             $LineNumber = 0
 
             try {
-                $Reader = [System.IO.StreamReader]::new($File, [System.Text.Encoding]::UTF8, $true)
+                # Open with FileShare.ReadWrite so we can read while Netlogon has the file locked
+                $FileStream = [System.IO.FileStream]::new($File, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                $Reader = [System.IO.StreamReader]::new($FileStream, [System.Text.Encoding]::UTF8, $true)
                 try {
                     while ($null -ne ($Line = $Reader.ReadLine())) {
                         $LineNumber++
@@ -743,6 +745,7 @@ function Read-NetlogonDebugLog {
                 }
                 finally {
                     $Reader.Dispose()
+                    $FileStream.Dispose()
                 }
             }
             catch {

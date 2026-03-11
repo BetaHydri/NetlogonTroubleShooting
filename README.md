@@ -225,6 +225,10 @@ Timestamp            Category       StatusCode                    Message
 
 **Available categories:** `All`, `Authentication`, `DCDiscovery`, `SiteInfo`, `DnsRegistration`, `SecureChannel`
 
+**Screenshot:**
+
+![Read-NetlogonDebugLog sample output](docs/ReadNetlogon_sample.png)
+
 ---
 
 ### Get-NetlogonStatus

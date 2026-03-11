@@ -603,6 +603,209 @@ Invoke-NetlogonDiagnostic -OutputFormat Text -OutputPath 'C:\Reports\netlogon_di
 
 ---
 
+## Troubleshooting Workflows
+
+The functions in this module are designed to work together. Below are recommended workflows for common scenarios — from quick triage to deep-dive analysis.
+
+### Workflow 1: Quick Health Check (2 minutes)
+
+Start here when a user reports "can't log in" or "domain not available". This gives you a fast overview without changing anything.
+
+```powershell
+Import-Module NetlogonTroubleShooting
+
+# Step 1 — Is the Netlogon service running and which DC are we talking to?
+Get-NetlogonStatus
+
+# Step 2 — Is the secure channel healthy?
+Test-NetlogonSecureChannel
+
+# Step 3 — Can we reach the DC on all required ports?
+Test-DCPortConnectivity | Format-Table
+```
+
+**Decision tree:**
+- `ServiceStatus` is **Stopped** → Start the Netlogon service, investigate why it stopped.
+- `SecureChannelOK` is **False** → Continue with **Workflow 3** (Secure Channel Repair).
+- Ports show **False** → Firewall or network issue. Focus on the blocked ports.
+
+---
+
+### Workflow 2: Full Diagnostic Report (one-shot)
+
+When you need a complete picture to attach to a support ticket or share with a colleague. Runs all checks in sequence and opens the report in your browser.
+
+```powershell
+Import-Module NetlogonTroubleShooting
+
+# Generate an HTML report and open it automatically
+Invoke-NetlogonDiagnostic -OutputFormat HTML
+
+# Or save to a specific path without opening
+Invoke-NetlogonDiagnostic -OutputFormat HTML -OutputPath 'C:\Reports\netlogon_diag.html' -NoOpen
+
+# For remote servers
+Invoke-NetlogonDiagnostic -ComputerName 'Server01' -OutputFormat HTML -OutputPath '\\FileServer\Reports\Server01_diag.html'
+```
+
+---
+
+### Workflow 3: Secure Channel Repair
+
+The secure channel is broken (Event 5805 / 5722 / 5723). Follow this sequence to diagnose and fix.
+
+```powershell
+Import-Module NetlogonTroubleShooting
+
+# Step 1 — Confirm the secure channel is broken
+Test-NetlogonSecureChannel
+
+# Step 2 — Check time sync (Kerberos fails at >5 min skew)
+Test-TimeSynchronization
+
+# Step 3 — Verify the DC is reachable on all required ports
+Test-DCPortConnectivity | Where-Object { -not $_.Reachable } | Format-Table
+
+# Step 4 — Check DNS records (DC locator depends on these)
+Test-NetlogonDnsRecords | Where-Object { -not $_.Resolved } | Format-Table
+
+# Step 5 — Attempt repair (requires domain admin credentials)
+Test-NetlogonSecureChannel -Repair -Credential (Get-Credential)
+
+# Step 6 — If repair fails, check the debug log for details
+Enable-NetlogonDebug
+# Reproduce the issue, then:
+Read-NetlogonDebugLog -ErrorsOnly | Format-Table Timestamp, Category, StatusCode, Message -AutoSize
+Disable-NetlogonDebug
+```
+
+---
+
+### Workflow 4: DNS & Site Troubleshooting
+
+Users in a specific site are authenticating against the wrong DC (cross-site), or you see `NO_CLIENT_SITE` in the logs.
+
+```powershell
+Import-Module NetlogonTroubleShooting
+
+# Step 1 — Which site is this machine assigned to?
+Get-ADSiteInfo
+
+# Step 2 — Which DC does the locator pick?
+Get-DCLocatorInfo
+
+# Step 3 — Are the site-specific DNS records registered?
+Test-NetlogonDnsRecords -SiteName 'NYC'
+
+# Step 4 — Force the locator to rediscover
+Get-DCLocatorInfo -ForceRediscovery -SiteName 'NYC'
+```
+
+**What to look for:**
+- `NoClientSite = True` → The machine's IP doesn't match any AD subnet. Create a subnet in AD Sites and Services.
+- Site-specific DNS records **not resolved** → Run `nltest /dsregdns` on the DC, or check DNS replication.
+- DC is in a **different site** → Verify subnet-to-site mapping and site link costs.
+
+---
+
+### Workflow 5: Event 5719 Deep Dive
+
+Event 5719 ("No Domain Controller available") is the most common Netlogon complaint. This workflow covers all the usual root causes.
+
+```powershell
+Import-Module NetlogonTroubleShooting
+
+# Step 1 — Get the events with context and remediation guidance
+Get-NetlogonEvent -EventId 5719 -StartTime (Get-Date).AddDays(-7)
+
+# Step 2 — Can we find a DC at all?
+Get-DCLocatorInfo
+
+# Step 3 — DNS healthy?
+Test-NetlogonDnsRecords | Format-Table RecordName, Resolved, Purpose -AutoSize
+
+# Step 4 — Network path clear?
+Test-DCPortConnectivity | Format-Table DomainController, Port, Service, Reachable -AutoSize
+
+# Step 5 — Time in sync?
+Test-TimeSynchronization
+
+# Step 6 — Enable debug logging to capture the next occurrence
+Enable-NetlogonDebug
+
+# ... wait for 5719 to recur, then:
+Read-NetlogonDebugLog -ErrorsOnly -Category Authentication
+Read-NetlogonDebugLog -ErrorsOnly -Category DCDiscovery
+
+# Step 7 — Clean up
+Disable-NetlogonDebug
+```
+
+---
+
+### Workflow 6: Debug Log Analysis
+
+Enable debug logging, reproduce the issue, then analyze the log — without ever leaving PowerShell.
+
+```powershell
+Import-Module NetlogonTroubleShooting
+
+# Step 1 — Check if debug logging is already on
+Get-NetlogonDebugStatus
+
+# Step 2 — Enable full debug logging
+Enable-NetlogonDebug -Level Full
+
+# Step 3 — Reproduce the problem (wait / trigger the issue)
+
+# Step 4 — Analyze the log
+Read-NetlogonDebugLog -ErrorsOnly | Format-Table Timestamp, Category, StatusCode, Message -AutoSize
+
+# Step 5 — Dig into specific categories
+Read-NetlogonDebugLog -Category SecureChannel -Last 20
+Read-NetlogonDebugLog -Category DCDiscovery -Last 20
+Read-NetlogonDebugLog -Category DnsRegistration -Last 20
+
+# Step 6 — Include the backup log for longer history
+Read-NetlogonDebugLog -IncludeBackup -ErrorsOnly
+
+# Step 7 — Disable debug logging when done
+Disable-NetlogonDebug
+```
+
+---
+
+### Workflow 7: Remote Multi-Server Sweep
+
+Check multiple servers in one go — useful for rolling out a fix or validating across an environment.
+
+```powershell
+Import-Module NetlogonTroubleShooting
+
+$Servers = 'Server01', 'Server02', 'Server03'
+
+# Secure channel health across all servers
+$Servers | ForEach-Object { Test-NetlogonSecureChannel -ComputerName $_ } |
+    Format-Table ComputerName, SecureChannelOK, DCName -AutoSize
+
+# Port connectivity from each server
+$Servers | ForEach-Object { Test-DCPortConnectivity -ComputerName $_ } |
+    Where-Object { -not $_.Reachable } |
+    Format-Table SourceComputer, DomainController, Port, Service -AutoSize
+
+# Site assignment for all servers
+$Servers | ForEach-Object { Get-ADSiteInfo -ComputerName $_ } |
+    Format-Table ComputerName, AssignedSite, ClientIP, NoClientSite -AutoSize
+
+# Generate HTML reports for each server
+$Servers | ForEach-Object {
+    Invoke-NetlogonDiagnostic -ComputerName $_ -OutputFormat HTML `
+        -OutputPath "C:\Reports\${_}_netlogon.html" -NoOpen
+}
+```
+
+---
+
 ## Single Domain Controller / Lab Environments
 
 > **Note:** When running `Test-NetlogonSecureChannel` on a domain controller that is the **only DC** in the domain, the test will report the secure channel as failing with `ERROR_NO_SUCH_DOMAIN` (0x54b). **This is expected behaviour and not a real error.**

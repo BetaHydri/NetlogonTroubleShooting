@@ -319,6 +319,29 @@ Recommendations:
 
 ---
 
+## Single Domain Controller / Lab Environments
+
+> **Note:** When running `Test-NetlogonSecureChannel` on a domain controller that is the **only DC** in the domain, the test will report the secure channel as failing with `ERROR_NO_SUCH_DOMAIN` (0x54b). **This is expected behaviour and not a real error.**
+>
+> A domain controller validates its secure channel against a *partner* DC. In a single-DC environment there is no partner to contact, so the test will always fail. The module detects this scenario automatically and displays an informational message instead of a "BROKEN" warning.
+>
+> This applies to:
+> - Small lab / test environments with a single DC
+> - Newly deployed domains before a second DC is promoted
+> - Isolated / disaster-recovery DCs
+>
+> ```
+> Secure channel test on DC01 is NOT APPLICABLE (single domain controller).
+>
+> Note:
+>   - This computer is the only domain controller in the domain.
+>   - A secure channel test requires a partner DC to validate against.
+>   - In single-DC environments this test is expected to fail — this is normal and not an error.
+>   - Add a second DC to enable secure channel validation between domain controllers.
+> ```
+
+---
+
 ## Event ID Reference
 
 | Event ID | Summary | Severity |

@@ -1042,6 +1042,32 @@ function Test-NetlogonSecureChannel {
                 }
 
                 if ($IsLocal) {
+                    # Detect if this machine is a domain controller
+                    $IsDC = $false
+                    $IsSingleDC = $false
+                    try {
+                        $OSInfo = Get-CimInstance -ClassName Win32_OperatingSystem -Property ProductType -ErrorAction Stop
+                        # ProductType 2 = Domain Controller
+                        $IsDC = ($OSInfo.ProductType -eq 2)
+                    }
+                    catch {
+                        Write-Verbose "Could not determine product type: $_"
+                    }
+
+                    # If this is a DC, check if it is the only one in the domain
+                    if ($IsDC) {
+                        try {
+                            $DomainObj = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
+                            $AllDCs = @($DomainObj.DomainControllers)
+                            if ($AllDCs.Count -le 1) {
+                                $IsSingleDC = $true
+                            }
+                        }
+                        catch {
+                            Write-Verbose "Could not enumerate domain controllers: $_"
+                        }
+                    }
+
                     # Test with Test-ComputerSecureChannel
                     try {
                         $SCTest = Test-ComputerSecureChannel -ErrorAction Stop
@@ -1066,34 +1092,45 @@ function Test-NetlogonSecureChannel {
                         $Result.NltestResult = "nltest failed: $_"
                     }
 
-                    # Repair if requested
-                    if ($Repair -and -not $Result.SecureChannelOK) {
-                        if (-not $Credential) {
-                            Write-Error "The -Credential parameter is required for repair. Use -Credential (Get-Credential)."
-                            $Result.RepairAttempted = $false
-                        }
-                        else {
-                            $Result.RepairAttempted = $true
-                            try {
-                                $RepairOK = Test-ComputerSecureChannel -Repair -Credential $Credential -ErrorAction Stop
-                                $Result.RepairResult = if ($RepairOK) { 'Repair succeeded' } else { 'Repair failed' }
-                                $Result.SecureChannelOK = $RepairOK
-                            }
-                            catch {
-                                $Result.RepairResult = "Repair failed: $_"
-                            }
-                        }
-                    }
-
-                    # Build recommendations
-                    if (-not $Result.SecureChannelOK) {
+                    # Handle single-DC scenario: the test is expected to fail
+                    if ($IsSingleDC -and -not $Result.SecureChannelOK) {
                         $Result.Recommendations = @(
-                            'Run: Test-ComputerSecureChannel -Repair -Credential (Get-Credential)'
-                            'If repair fails, rejoin the domain: Remove-Computer then Add-Computer'
-                            'Check AD replication: repadmin /replsummary'
-                            'Verify the computer account is not disabled in AD'
-                            'Check time synchronization (w32tm /query /status)'
+                            'This computer is the only domain controller in the domain.'
+                            'A secure channel test requires a partner DC to validate against.'
+                            'In single-DC environments this test is expected to fail — this is normal and not an error.'
+                            'Add a second DC to enable secure channel validation between domain controllers.'
                         )
+                    }
+                    else {
+                        # Repair if requested
+                        if ($Repair -and -not $Result.SecureChannelOK) {
+                            if (-not $Credential) {
+                                Write-Error "The -Credential parameter is required for repair. Use -Credential (Get-Credential)."
+                                $Result.RepairAttempted = $false
+                            }
+                            else {
+                                $Result.RepairAttempted = $true
+                                try {
+                                    $RepairOK = Test-ComputerSecureChannel -Repair -Credential $Credential -ErrorAction Stop
+                                    $Result.RepairResult = if ($RepairOK) { 'Repair succeeded' } else { 'Repair failed' }
+                                    $Result.SecureChannelOK = $RepairOK
+                                }
+                                catch {
+                                    $Result.RepairResult = "Repair failed: $_"
+                                }
+                            }
+                        }
+
+                        # Build recommendations
+                        if (-not $Result.SecureChannelOK) {
+                            $Result.Recommendations = @(
+                                'Run: Test-ComputerSecureChannel -Repair -Credential (Get-Credential)'
+                                'If repair fails, rejoin the domain: Remove-Computer then Add-Computer'
+                                'Check AD replication: repadmin /replsummary'
+                                'Verify the computer account is not disabled in AD'
+                                'Check time synchronization (w32tm /query /status)'
+                            )
+                        }
                     }
                 }
                 else {
@@ -1117,6 +1154,11 @@ function Test-NetlogonSecureChannel {
                 # Console output
                 if ($Result.SecureChannelOK) {
                     Write-Host "Secure channel on $Computer is HEALTHY." -ForegroundColor Green
+                }
+                elseif ($IsSingleDC) {
+                    Write-Host "Secure channel test on $Computer is NOT APPLICABLE (single domain controller)." -ForegroundColor Cyan
+                    Write-Host "`nNote:" -ForegroundColor Yellow
+                    $Result.Recommendations | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
                 }
                 else {
                     Write-Host "Secure channel on $Computer is BROKEN." -ForegroundColor Red

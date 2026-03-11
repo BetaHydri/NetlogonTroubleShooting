@@ -2355,6 +2355,9 @@ function _Format-DiagnosticHtml {
         $null = $Sb.AppendLine("<tr><td>Domain</td><td>$([System.Net.WebUtility]::HtmlEncode($Status.DomainName))</td></tr>")
         $null = $Sb.AppendLine("<tr><td>Auth DC</td><td>$([System.Net.WebUtility]::HtmlEncode($Status.AuthenticatingDC))</td></tr>")
         $null = $Sb.AppendLine("<tr><td>Secure Channel</td><td class='$SCClass'>$(if ($Status.SecureChannelHealthy) { 'Healthy' } else { 'UNHEALTHY' })</td></tr>")
+        $DbgClass = if ($Status.DebugLoggingEnabled) { 'warn' } else { 'ok' }
+        $DbgText = if ($Status.DebugLoggingEnabled) { $Status.DebugLevel } else { 'Disabled' }
+        $null = $Sb.AppendLine("<tr><td>Debug Logging</td><td class='$DbgClass'>$([System.Net.WebUtility]::HtmlEncode($DbgText))</td></tr>")
         $null = $Sb.AppendLine("</table>")
     }
     else { $null = $Sb.AppendLine("<p>$([System.Net.WebUtility]::HtmlEncode("$Status"))</p>") }

@@ -1256,7 +1256,7 @@ function Test-DCPortConnectivity {
             try {
                 $Domain = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
                 $DCListOutput = nltest /dclist:$Domain 2>&1 | Out-String
-                $DomainController = [regex]::Matches($DCListOutput, '\\\\(\S+)') | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -and $_ -ne 'The' }
+                $DomainController = [regex]::Matches($DCListOutput, '\\\\([a-zA-Z0-9._-]+)') | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -and $_ -ne 'The' }
 
                 if (-not $DomainController) {
                     Write-Error 'Could not discover domain controllers. Specify -DomainController manually.'

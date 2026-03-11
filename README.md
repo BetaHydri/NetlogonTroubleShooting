@@ -321,6 +321,10 @@ Recommendations:
   - Check time synchronization (w32tm /query /status)
 ```
 
+**Screenshot:**
+
+![Test-NetlogonSecureChannel sample output](docs/NetlogonSChannelSample.png)
+
 ---
 
 ## Single Domain Controller / Lab Environments

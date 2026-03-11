@@ -1756,19 +1756,19 @@ function Get-DCLocatorInfo {
             $Success = $OutputTrimmed -match 'NERR_Success' -or $null -ne $DCName
 
             [PSCustomObject]@{
-                PSTypeName      = 'NetlogonTroubleShooting.DCLocator'
-                ComputerName    = $ComputerName
-                DomainName      = $DomainName
-                DCName          = $DCName
-                DCAddress       = $DCAddress
-                DCSiteName      = $DCSiteName
-                ClientSiteName  = $ClientSiteName
-                DomainGuid      = $DomainGuid
-                Flags           = $DCFlags
+                PSTypeName       = 'NetlogonTroubleShooting.DCLocator'
+                ComputerName     = $ComputerName
+                DomainName       = $DomainName
+                DCName           = $DCName
+                DCAddress        = $DCAddress
+                DCSiteName       = $DCSiteName
+                ClientSiteName   = $ClientSiteName
+                DomainGuid       = $DomainGuid
+                Flags            = $DCFlags
                 ForceRediscovery = $ForceRediscovery.IsPresent
-                RequestedSite   = $SiteName
-                Success         = $Success
-                RawOutput       = $OutputTrimmed
+                RequestedSite    = $SiteName
+                Success          = $Success
+                RawOutput        = $OutputTrimmed
             }
 
             if ($Success) {
@@ -1859,15 +1859,15 @@ function Get-ADSiteInfo {
                 # Get client IP
                 if ($IsLocal) {
                     $ClientIP = (Get-NetIPAddress -AddressFamily IPv4 -Type Unicast -ErrorAction SilentlyContinue |
-                                 Where-Object { $_.IPAddress -ne '127.0.0.1' } |
-                                 Select-Object -First 1).IPAddress
+                        Where-Object { $_.IPAddress -ne '127.0.0.1' } |
+                        Select-Object -First 1).IPAddress
                 }
                 else {
                     try {
                         $ClientIP = Invoke-Command -ComputerName $Computer -ScriptBlock {
                             (Get-NetIPAddress -AddressFamily IPv4 -Type Unicast -ErrorAction SilentlyContinue |
-                             Where-Object { $_.IPAddress -ne '127.0.0.1' } |
-                             Select-Object -First 1).IPAddress
+                            Where-Object { $_.IPAddress -ne '127.0.0.1' } |
+                            Select-Object -First 1).IPAddress
                         }
                     }
                     catch {
@@ -1904,8 +1904,8 @@ function Get-ADSiteInfo {
                             $DomainName = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
                             $DCListOutput = nltest /dclist:$DomainName 2>&1 | Out-String
                             $SiteDCs = [regex]::Matches($DCListOutput, '\\\\(\S+)') |
-                                       ForEach-Object { $_.Groups[1].Value } |
-                                       Where-Object { $_ -and $_ -ne 'The' }
+                            ForEach-Object { $_.Groups[1].Value } |
+                            Where-Object { $_ -and $_ -ne 'The' }
                         }
                         catch {
                             Write-Verbose "Fallback nltest also failed: $_"
@@ -1932,17 +1932,17 @@ function Get-ADSiteInfo {
                 }
 
                 [PSCustomObject]@{
-                    PSTypeName    = 'NetlogonTroubleShooting.SiteInfo'
-                    ComputerName  = $Computer
-                    ClientIP      = $ClientIP
-                    AssignedSite  = if ($AssignedSite) { $AssignedSite } else { 'NO_CLIENT_SITE' }
-                    NltestSite    = $NltestSite
-                    NoClientSite  = $NoClientSite
-                    Subnets       = $SiteSubnets -join '; '
-                    SubnetCount   = $SiteSubnets.Count
-                    DCs           = $SiteDCs -join '; '
-                    DCCount       = $SiteDCs.Count
-                    SiteLinks     = $SiteLinks -join '; '
+                    PSTypeName   = 'NetlogonTroubleShooting.SiteInfo'
+                    ComputerName = $Computer
+                    ClientIP     = $ClientIP
+                    AssignedSite = if ($AssignedSite) { $AssignedSite } else { 'NO_CLIENT_SITE' }
+                    NltestSite   = $NltestSite
+                    NoClientSite = $NoClientSite
+                    Subnets      = $SiteSubnets -join '; '
+                    SubnetCount  = $SiteSubnets.Count
+                    DCs          = $SiteDCs -join '; '
+                    DCCount      = $SiteDCs.Count
+                    SiteLinks    = $SiteLinks -join '; '
                 }
 
                 # Console feedback
@@ -2138,10 +2138,10 @@ function Invoke-NetlogonDiagnostic {
 
         # Return structured data as well
         [PSCustomObject]@{
-            PSTypeName    = 'NetlogonTroubleShooting.DiagnosticReport'
-            ComputerName  = $ComputerName
-            Timestamp     = $Timestamp
-            Results       = $Report
+            PSTypeName   = 'NetlogonTroubleShooting.DiagnosticReport'
+            ComputerName = $ComputerName
+            Timestamp    = $Timestamp
+            Results      = $Report
         }
     }
 }

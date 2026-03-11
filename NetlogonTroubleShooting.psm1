@@ -203,8 +203,9 @@ function Enable-NetlogonDebug {
     .DESCRIPTION
         Configures the Netlogon service to write detailed debug logs to
         %systemroot%\debug\netlogon.log by setting the DBFlag registry value.
-        Requires elevation (Run as Administrator). The Netlogon service is
-        restarted to apply the change.
+        Requires elevation (Run as Administrator). On modern Windows (Server
+        2012 R2+ / Windows 10+) the change is applied dynamically via
+        nltest /dbflag: without restarting the Netlogon service.
 
     .PARAMETER ComputerName
         The computer to enable debug logging on. Defaults to the local computer.
@@ -219,17 +220,14 @@ function Enable-NetlogonDebug {
         Maximum size of the netlogon.log file in bytes before it rolls over
         to netlogon.bak. Defaults to 256 MB (268435456 bytes).
 
-    .PARAMETER NoRestart
-        If specified, the Netlogon service will not be restarted. The debug
-        setting takes effect on next service restart.
-
     .EXAMPLE
         Enable-NetlogonDebug
-        Enables full Netlogon debug logging on the local machine and restarts the service.
+        Enables full Netlogon debug logging on the local machine. The change
+        is applied dynamically via nltest without restarting the service.
 
     .EXAMPLE
-        Enable-NetlogonDebug -Level Standard -NoRestart
-        Enables standard-level debug logging without restarting the Netlogon service.
+        Enable-NetlogonDebug -Level Standard
+        Enables standard-level debug logging on the local machine.
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
     param(
@@ -239,9 +237,7 @@ function Enable-NetlogonDebug {
         [ValidateSet('Full', 'Standard')]
         [string]$Level = 'Full',
 
-        [int]$MaxLogSizeBytes = 268435456,
-
-        [switch]$NoRestart
+        [int]$MaxLogSizeBytes = 268435456
     )
 
     begin {
@@ -270,23 +266,17 @@ function Enable-NetlogonDebug {
                         Set-ItemProperty -Path $RegPath -Name 'DBFlag' -Value $DebugFlags[$Level] -Type DWord -Force
                         Set-ItemProperty -Path $RegPath -Name 'MaximumLogFileSize' -Value $MaxLogSizeBytes -Type DWord -Force
 
-                        Write-Verbose "Registry values set on $Computer (DBFlag=0x$($DebugFlags[$Level].ToString('X')), MaxLogSize=$MaxLogSizeBytes)"
-
-                        if (-not $NoRestart) {
-                            Write-Verbose "Restarting Netlogon service on $Computer..."
-                            Restart-Service -Name 'Netlogon' -Force
-                            Write-Verbose "Netlogon service restarted."
-                        }
+                        # Apply dynamically via nltest (no service restart needed on modern OS)
+                        $null = & nltest /dbflag:"0x$($DebugFlags[$Level].ToString('X'))"
+                        Write-Verbose "Registry values set and applied on $Computer (DBFlag=0x$($DebugFlags[$Level].ToString('X')), MaxLogSize=$MaxLogSizeBytes)"
                     }
                     else {
                         Invoke-Command -ComputerName $Computer -ScriptBlock {
-                            param($RegPathRemote, $FlagValue, $MaxSize, $SkipRestart)
+                            param($RegPathRemote, $FlagValue, $MaxSize)
                             Set-ItemProperty -Path $RegPathRemote -Name 'DBFlag' -Value $FlagValue -Type DWord -Force
                             Set-ItemProperty -Path $RegPathRemote -Name 'MaximumLogFileSize' -Value $MaxSize -Type DWord -Force
-                            if (-not $SkipRestart) {
-                                Restart-Service -Name 'Netlogon' -Force
-                            }
-                        } -ArgumentList $RegPath, $DebugFlags[$Level], $MaxLogSizeBytes, $NoRestart.IsPresent
+                            $null = & nltest /dbflag:"0x$($FlagValue.ToString('X'))"
+                        } -ArgumentList $RegPath, $DebugFlags[$Level], $MaxLogSizeBytes
                     }
 
                     [PSCustomObject]@{
@@ -297,7 +287,7 @@ function Enable-NetlogonDebug {
                         DBFlag       = '0x{0:X}' -f $DebugFlags[$Level]
                         MaxLogSize   = $MaxLogSizeBytes
                         LogPath      = "\\$Computer\admin$\debug\netlogon.log"
-                        Restarted    = -not $NoRestart.IsPresent
+                        Restarted    = $false
                     }
 
                     Write-Host "Netlogon debug logging ENABLED on $Computer (Level: $Level)." -ForegroundColor Green
@@ -322,14 +312,12 @@ function Disable-NetlogonDebug {
 
     .DESCRIPTION
         Removes the DBFlag registry value to stop Netlogon debug logging.
-        Requires elevation (Run as Administrator). The Netlogon service is
-        restarted to apply the change.
+        Requires elevation (Run as Administrator). On modern Windows (Server
+        2012 R2+ / Windows 10+) the change is applied dynamically via
+        nltest /dbflag: without restarting the Netlogon service.
 
     .PARAMETER ComputerName
         The computer to disable debug logging on. Defaults to the local computer.
-
-    .PARAMETER NoRestart
-        If specified, the Netlogon service will not be restarted.
 
     .EXAMPLE
         Disable-NetlogonDebug
@@ -342,9 +330,7 @@ function Disable-NetlogonDebug {
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
     param(
         [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
-        [string[]]$ComputerName = $env:COMPUTERNAME,
-
-        [switch]$NoRestart
+        [string[]]$ComputerName = $env:COMPUTERNAME
     )
 
     begin {
@@ -367,22 +353,16 @@ function Disable-NetlogonDebug {
 
                         Set-ItemProperty -Path $RegPath -Name 'DBFlag' -Value 0 -Type DWord -Force
 
-                        Write-Verbose "DBFlag set to 0 on $Computer"
-
-                        if (-not $NoRestart) {
-                            Write-Verbose "Restarting Netlogon service on $Computer..."
-                            Restart-Service -Name 'Netlogon' -Force
-                            Write-Verbose "Netlogon service restarted."
-                        }
+                        # Apply dynamically via nltest (no service restart needed on modern OS)
+                        $null = & nltest /dbflag:0x0
+                        Write-Verbose "DBFlag set to 0 and applied on $Computer"
                     }
                     else {
                         Invoke-Command -ComputerName $Computer -ScriptBlock {
-                            param($RegPathRemote, $SkipRestart)
+                            param($RegPathRemote)
                             Set-ItemProperty -Path $RegPathRemote -Name 'DBFlag' -Value 0 -Type DWord -Force
-                            if (-not $SkipRestart) {
-                                Restart-Service -Name 'Netlogon' -Force
-                            }
-                        } -ArgumentList $RegPath, $NoRestart.IsPresent
+                            $null = & nltest /dbflag:0x0
+                        } -ArgumentList $RegPath
                     }
 
                     [PSCustomObject]@{
@@ -391,7 +371,7 @@ function Disable-NetlogonDebug {
                         DebugEnabled = $false
                         Level        = 'Disabled'
                         DBFlag       = '0x0'
-                        Restarted    = -not $NoRestart.IsPresent
+                        Restarted    = $false
                     }
 
                     Write-Host "Netlogon debug logging DISABLED on $Computer." -ForegroundColor Yellow
@@ -626,6 +606,62 @@ function Read-NetlogonDebugLog {
             'SecureChannel'   = 'SECURE_CHANNEL|NlSessionSetup|NlSetServerClientSession|SC_|CHANGELOG'
         }
 
+        # NTSTATUS / Win32 / Netlogon status code descriptions
+        $StatusDescriptions = @{
+            # NTSTATUS codes (symbolic names)
+            'STATUS_SUCCESS'                    = 'The operation completed successfully.'
+            'STATUS_ACCESS_DENIED'              = 'Access is denied. The caller does not have the required permissions.'
+            'STATUS_NO_TRUST_SAM_ACCOUNT'       = 'The SAM database on the domain controller does not have a computer account for this workstation trust relationship.'
+            'STATUS_WRONG_PASSWORD'             = 'The specified network password is incorrect.'
+            'STATUS_NO_SUCH_USER'               = 'The specified user does not exist.'
+            'STATUS_ACCOUNT_DISABLED'           = 'The referenced account is currently disabled.'
+            'STATUS_ACCOUNT_LOCKED_OUT'         = 'The referenced account is currently locked out and may not be logged on to.'
+            'STATUS_NO_LOGON_SERVERS'           = 'There are currently no logon servers available to service the logon request.'
+            'STATUS_TRUSTED_DOMAIN_FAILURE'     = 'The trust relationship between this workstation and the primary domain failed.'
+            'STATUS_NETLOGON_NOT_STARTED'       = 'An attempt was made to logon, but the Netlogon service was not started.'
+            'STATUS_NO_SUCH_DOMAIN'             = 'The specified domain did not exist.'
+            'STATUS_BAD_NETWORK_PATH'           = 'The network path was not found.'
+            'STATUS_NETWORK_UNREACHABLE'        = 'The remote network is not reachable by the transport.'
+            'STATUS_HOST_UNREACHABLE'           = 'The remote system is not reachable by the transport.'
+            'STATUS_CONNECTION_REFUSED'         = 'The remote system refused the network connection.'
+            'STATUS_IO_TIMEOUT'                 = 'The specified I/O operation was not completed before the time-out period expired.'
+            'STATUS_OBJECT_NAME_NOT_FOUND'      = 'The object name is not found.'
+            'STATUS_INSUFFICIENT_RESOURCES'     = 'Insufficient system resources exist to complete the API.'
+            'STATUS_TRUSTED_RELATIONSHIP_FAILURE' = 'The trust relationship between the workstation and the domain failed.'
+            'STATUS_NOLOGON_WORKSTATION_TRUST_ACCOUNT' = 'The account used is a computer account and workstation trust account logon is not allowed.'
+            'STATUS_INVALID_COMPUTER_NAME'      = 'The specified computer name contains invalid characters.'
+            'STATUS_DS_SAM_INIT_FAILURE'        = 'The Directory Service failed to initialize the SAM subsystem.'
+            'STATUS_TIME_DIFFERENCE_AT_DC'      = 'There is a time and/or date difference between the client and server.'
+            'STATUS_NOLOGON_SERVER_TRUST_ACCOUNT' = 'The account used is a server trust account and cannot be used to log on.'
+            'STATUS_NOLOGON_INTERDOMAIN_TRUST_ACCOUNT' = 'The account used is an interdomain trust account and cannot be used to log on.'
+            'STATUS_DOMAIN_TRUST_INCONSISTENT'  = 'The name or SID of the domain specified is inconsistent with the trust information for that domain.'
+            # Common hex status codes (NTSTATUS / Win32 numeric)
+            '0x0'                               = 'Success (STATUS_SUCCESS)'
+            '0x5'                               = 'Access denied (ERROR_ACCESS_DENIED)'
+            '0x35'                              = 'The network path was not found (ERROR_BAD_NETPATH)'
+            '0x6D9'                             = 'There are no more endpoints available from the endpoint mapper (EPT_S_NOT_REGISTERED)'
+            '0x6BA'                             = 'The RPC server is unavailable (RPC_S_SERVER_UNAVAILABLE)'
+            '0x6BF'                             = 'The RPC server is too busy (RPC_S_SERVER_TOO_BUSY)'
+            '0x51F'                             = 'No logon servers available (ERROR_NO_LOGON_SERVERS)'
+            '0x52E'                             = 'Logon failure: unknown user name or bad password (ERROR_LOGON_FAILURE)'
+            '0x701'                             = 'The trust relationship failed (ERROR_TRUSTED_DOMAIN_FAILURE)'
+            '0x721'                             = 'The session setup failed with STATUS_NO_TRUST_SAM_ACCOUNT'
+            '0x2A300'                           = 'DnsFailedDeregisterTimeout — DNS deregistration timeout exceeded. DNS records may be stale.'
+            '0xC000005E'                        = 'No logon servers available (STATUS_NO_LOGON_SERVERS)'
+            '0xC0000022'                        = 'Access denied (STATUS_ACCESS_DENIED)'
+            '0xC000006D'                        = 'Logon failure (STATUS_LOGON_FAILURE)'
+            '0xC000006A'                        = 'Wrong password (STATUS_WRONG_PASSWORD)'
+            '0xC0000064'                        = 'No such user (STATUS_NO_SUCH_USER)'
+            '0xC0000072'                        = 'Account disabled (STATUS_ACCOUNT_DISABLED)'
+            '0xC0000234'                        = 'Account locked out (STATUS_ACCOUNT_LOCKED_OUT)'
+            '0xC000018B'                        = 'No trust SAM account (STATUS_NO_TRUST_SAM_ACCOUNT)'
+            '0xC000018D'                        = 'Trusted relationship failure (STATUS_TRUSTED_RELATIONSHIP_FAILURE)'
+            '0xC000019B'                        = 'Netlogon not started (STATUS_NETLOGON_NOT_STARTED)'
+            '0xC00000DF'                        = 'The specified domain did not exist (STATUS_NO_SUCH_DOMAIN)'
+            '0xC00000B5'                        = 'I/O timeout (STATUS_IO_TIMEOUT)'
+            '0xC0000203'                        = 'Time difference at DC (STATUS_TIME_DIFFERENCE_AT_DC)'
+        }
+
         # Netlogon.log line format: MM/DD HH:MM:SS [TYPE] [PID] Message
         $LineRegex = '^(\d{2}/\d{2}(?:/\d{2,4})?\s+\d{2}:\d{2}:\d{2})\s+\[(\w+)\]\s+(?:\[(\d+)\]\s+)?(.*)$'
     }
@@ -725,18 +761,43 @@ function Read-NetlogonDebugLog {
                                 $StatusCode = $Matches[1]
                             }
 
+                            # Resolve status code to human-readable description
+                            $StatusDescription = $null
+                            if ($StatusCode) {
+                                # Try exact match first
+                                if ($StatusDescriptions.ContainsKey($StatusCode)) {
+                                    $StatusDescription = $StatusDescriptions[$StatusCode]
+                                }
+                                elseif ($StatusCode -match '^0x') {
+                                    # Normalize hex to uppercase for lookup
+                                    $NormalizedHex = '0x' + $StatusCode.Substring(2).TrimStart('0').ToUpper()
+                                    if ($NormalizedHex -eq '0x') { $NormalizedHex = '0x0' }
+                                    foreach ($Key in $StatusDescriptions.Keys) {
+                                        if ($Key -match '^0x') {
+                                            $KeyNorm = '0x' + $Key.Substring(2).TrimStart('0').ToUpper()
+                                            if ($KeyNorm -eq '0x') { $KeyNorm = '0x0' }
+                                            if ($KeyNorm -eq $NormalizedHex) {
+                                                $StatusDescription = $StatusDescriptions[$Key]
+                                                break
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             $Entry = [PSCustomObject]@{
-                                PSTypeName = 'NetlogonTroubleShooting.LogEntry'
-                                SourceFile = $FileInfo.Name
-                                LineNumber = $LineNumber
-                                Timestamp  = $ParsedTime
-                                LogType    = $LogType
-                                ProcessId  = $ProcessId
-                                Category   = $EntryCategory
-                                IsError    = $IsError
-                                StatusCode = $StatusCode
-                                Message    = $Message.Trim()
-                                RawLine    = $Line
+                                PSTypeName        = 'NetlogonTroubleShooting.LogEntry'
+                                SourceFile        = $FileInfo.Name
+                                LineNumber        = $LineNumber
+                                Timestamp         = $ParsedTime
+                                LogType           = $LogType
+                                ProcessId         = $ProcessId
+                                Category          = $EntryCategory
+                                IsError           = $IsError
+                                StatusCode        = $StatusCode
+                                StatusDescription = $StatusDescription
+                                Message           = $Message.Trim()
+                                RawLine           = $Line
                             }
 
                             $AllEntries.Add($Entry)

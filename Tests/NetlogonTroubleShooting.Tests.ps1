@@ -173,7 +173,7 @@ Describe 'Enable-NetlogonDebug' {
             } -ParameterFilter { $TypeName -eq 'Security.Principal.WindowsPrincipal' }
 
             Mock -ModuleName NetlogonTroubleShooting -CommandName Set-ItemProperty {}
-            Mock -ModuleName NetlogonTroubleShooting -CommandName Restart-Service {}
+            Mock -ModuleName NetlogonTroubleShooting -CommandName nltest {}
         }
 
         It 'Should return a debug config object' {
@@ -201,14 +201,14 @@ Describe 'Enable-NetlogonDebug' {
             Should -Invoke -ModuleName NetlogonTroubleShooting -CommandName Set-ItemProperty -Times 2 -Scope It
         }
 
-        It 'Should restart the Netlogon service by default' {
+        It 'Should apply via nltest without restarting the service' {
             Enable-NetlogonDebug -Confirm:$false
-            Should -Invoke -ModuleName NetlogonTroubleShooting -CommandName Restart-Service -Times 1 -Scope It
+            Should -Invoke -ModuleName NetlogonTroubleShooting -CommandName nltest -Times 1 -Scope It
         }
 
-        It 'Should NOT restart when -NoRestart is specified' {
-            Enable-NetlogonDebug -NoRestart -Confirm:$false
-            Should -Invoke -ModuleName NetlogonTroubleShooting -CommandName Restart-Service -Times 0 -Scope It
+        It 'Should not restart the Netlogon service' {
+            $Result = Enable-NetlogonDebug -Confirm:$false
+            $Result.Restarted | Should -Be $false
         }
 
         It 'Should accept Standard level' {
@@ -231,7 +231,7 @@ Describe 'Disable-NetlogonDebug' {
             } -ParameterFilter { $TypeName -eq 'Security.Principal.WindowsPrincipal' }
 
             Mock -ModuleName NetlogonTroubleShooting -CommandName Set-ItemProperty {}
-            Mock -ModuleName NetlogonTroubleShooting -CommandName Restart-Service {}
+            Mock -ModuleName NetlogonTroubleShooting -CommandName nltest {}
         }
 
         It 'Should return a debug config object' {
@@ -259,14 +259,14 @@ Describe 'Disable-NetlogonDebug' {
             Should -Invoke -ModuleName NetlogonTroubleShooting -CommandName Set-ItemProperty -Times 1 -Scope It
         }
 
-        It 'Should restart the Netlogon service by default' {
+        It 'Should apply via nltest without restarting the service' {
             Disable-NetlogonDebug -Confirm:$false
-            Should -Invoke -ModuleName NetlogonTroubleShooting -CommandName Restart-Service -Times 1 -Scope It
+            Should -Invoke -ModuleName NetlogonTroubleShooting -CommandName nltest -Times 1 -Scope It
         }
 
-        It 'Should NOT restart when -NoRestart is given' {
-            Disable-NetlogonDebug -NoRestart -Confirm:$false
-            Should -Invoke -ModuleName NetlogonTroubleShooting -CommandName Restart-Service -Times 0 -Scope It
+        It 'Should not restart the Netlogon service' {
+            $Result = Disable-NetlogonDebug -Confirm:$false
+            $Result.Restarted | Should -Be $false
         }
     }
 }
@@ -425,6 +425,7 @@ Describe 'Read-NetlogonDebugLog' {
             $First.PSObject.Properties.Name | Should -Contain 'LogType'
             $First.PSObject.Properties.Name | Should -Contain 'Category'
             $First.PSObject.Properties.Name | Should -Contain 'IsError'
+            $First.PSObject.Properties.Name | Should -Contain 'StatusDescription'
             $First.PSObject.Properties.Name | Should -Contain 'Message'
             $First.PSObject.Properties.Name | Should -Contain 'RawLine'
         }
@@ -432,6 +433,27 @@ Describe 'Read-NetlogonDebugLog' {
         It 'Should parse timestamps' {
             $Results = Read-NetlogonDebugLog -Path $Script:TempLog
             $Results[0].Timestamp | Should -BeOfType [datetime]
+        }
+
+        It 'Should resolve STATUS_NO_TRUST_SAM_ACCOUNT to a description' {
+            $Results = Read-NetlogonDebugLog -Path $Script:TempLog -ErrorsOnly
+            $Entry = $Results | Where-Object { $_.StatusCode -eq 'STATUS_NO_TRUST_SAM_ACCOUNT' }
+            $Entry.StatusDescription | Should -Not -BeNullOrEmpty
+            $Entry.StatusDescription | Should -BeLike '*computer account*'
+        }
+
+        It 'Should resolve STATUS_ACCESS_DENIED to a description' {
+            $Results = Read-NetlogonDebugLog -Path $Script:TempLog -ErrorsOnly
+            $Entry = $Results | Where-Object { $_.StatusCode -eq 'STATUS_ACCESS_DENIED' }
+            $Entry.StatusDescription | Should -Not -BeNullOrEmpty
+            $Entry.StatusDescription | Should -BeLike '*Access*denied*'
+        }
+
+        It 'Should resolve hex status code 0x0 to Success' {
+            $Results = Read-NetlogonDebugLog -Path $Script:TempLog
+            $Entry = $Results | Where-Object { $_.StatusCode -eq '0x0' }
+            $Entry.StatusDescription | Should -Not -BeNullOrEmpty
+            $Entry.StatusDescription | Should -BeLike '*Success*'
         }
     }
 

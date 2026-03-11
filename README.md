@@ -294,6 +294,10 @@ Recommendations :
 Secure channel on SERVER01 is HEALTHY.
 ```
 
+**Screenshot (Healthy):**
+
+![Test-NetlogonSecureChannel sample output](docs/NetlogonSChannelSample.png)
+
 **Sample Output (Broken):**
 
 ```
@@ -320,10 +324,6 @@ Recommendations:
   - Verify the computer account is not disabled in AD
   - Check time synchronization (w32tm /query /status)
 ```
-
-**Screenshot:**
-
-![Test-NetlogonSecureChannel sample output](docs/NetlogonSChannelSample.png)
 
 ---
 

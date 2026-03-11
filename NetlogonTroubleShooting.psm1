@@ -2001,6 +2001,14 @@ function Invoke-NetlogonDiagnostic {
         Generates an HTML diagnostic report and saves it.
 
     .EXAMPLE
+        Invoke-NetlogonDiagnostic -OutputFormat HTML
+        Generates an HTML report, saves it to a temp file, and opens it in the default browser.
+
+    .EXAMPLE
+        Invoke-NetlogonDiagnostic -OutputFormat HTML -NoOpen
+        Generates an HTML report and outputs the HTML string without opening a browser.
+
+    .EXAMPLE
         Invoke-NetlogonDiagnostic -ComputerName 'Server01'
         Diagnoses Server01 remotely.
     #>
@@ -2012,7 +2020,9 @@ function Invoke-NetlogonDiagnostic {
         [ValidateSet('Text', 'HTML')]
         [string]$OutputFormat = 'Text',
 
-        [string]$OutputPath
+        [string]$OutputPath,
+
+        [switch]$NoOpen
     )
 
     process {
@@ -2117,12 +2127,13 @@ function Invoke-NetlogonDiagnostic {
         # Build output
         if ($OutputFormat -eq 'HTML') {
             $Html = _Format-DiagnosticHtml -Report $Report -ComputerName $ComputerName -Timestamp $Timestamp
-            if ($OutputPath) {
-                $Html | Set-Content -Path $OutputPath -Encoding UTF8 -Force
-                Write-Host "`nHTML report saved to: $OutputPath" -ForegroundColor Green
+            if (-not $OutputPath) {
+                $OutputPath = Join-Path ([System.IO.Path]::GetTempPath()) "NetlogonDiag_${ComputerName}_$(Get-Date -Format 'yyyyMMdd_HHmmss').html"
             }
-            else {
-                $Html
+            $Html | Set-Content -Path $OutputPath -Encoding UTF8 -Force
+            Write-Host "`nHTML report saved to: $OutputPath" -ForegroundColor Green
+            if (-not $NoOpen) {
+                Start-Process -FilePath $OutputPath
             }
         }
         else {

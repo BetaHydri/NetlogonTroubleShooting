@@ -1103,6 +1103,10 @@ Describe 'Invoke-NetlogonDiagnostic' {
             (Get-Command Invoke-NetlogonDiagnostic).Parameters.Keys | Should -Contain 'OutputPath'
         }
 
+        It 'Should have a NoOpen switch parameter' {
+            (Get-Command Invoke-NetlogonDiagnostic).Parameters.Keys | Should -Contain 'NoOpen'
+        }
+
         It 'Should only accept Text or HTML for OutputFormat' {
             $ValidValues = (Get-Command Invoke-NetlogonDiagnostic).Parameters['OutputFormat'].Attributes |
                            Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] } |
@@ -1179,6 +1183,7 @@ Describe 'Invoke-NetlogonDiagnostic' {
             Mock -ModuleName NetlogonTroubleShooting -CommandName Get-NetlogonDebugStatus {
                 [PSCustomObject]@{ DebugEnabled = $false; Level = 'Disabled' }
             }
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Start-Process {}
         }
 
         It 'Should return a diagnostic report object' {
@@ -1211,6 +1216,23 @@ Describe 'Invoke-NetlogonDiagnostic' {
             $Content = Get-Content $TempFile -Raw
             $Content | Should -Match '<!DOCTYPE html>'
             $Content | Should -Match 'Netlogon Diagnostic'
+        }
+
+        It 'Should auto-open HTML in browser when -NoOpen is not specified' {
+            $TempFile = Join-Path $TestDrive 'diag_open.html'
+            Invoke-NetlogonDiagnostic -OutputFormat HTML -OutputPath $TempFile
+            Should -Invoke -ModuleName NetlogonTroubleShooting -CommandName Start-Process -Times 1 -Exactly -ParameterFilter { $FilePath -eq $TempFile }
+        }
+
+        It 'Should not open browser when -NoOpen is specified' {
+            $TempFile = Join-Path $TestDrive 'diag_noopen.html'
+            Invoke-NetlogonDiagnostic -OutputFormat HTML -OutputPath $TempFile -NoOpen
+            Should -Invoke -ModuleName NetlogonTroubleShooting -CommandName Start-Process -Times 0 -Exactly -ParameterFilter { $FilePath -eq $TempFile }
+        }
+
+        It 'Should save HTML to temp file when no OutputPath is given' {
+            $Result = Invoke-NetlogonDiagnostic -OutputFormat HTML -NoOpen
+            Should -Invoke -ModuleName NetlogonTroubleShooting -CommandName Start-Process -Times 0 -Exactly
         }
 
         It 'Should generate text when OutputFormat is Text' {

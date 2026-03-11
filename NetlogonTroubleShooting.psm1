@@ -1176,3 +1176,1272 @@ function Test-NetlogonSecureChannel {
 }
 
 #endregion
+
+#region Test-DCPortConnectivity
+
+function Test-DCPortConnectivity {
+    <#
+    .SYNOPSIS
+        Tests network connectivity to domain controllers on all required AD/Netlogon ports.
+
+    .DESCRIPTION
+        Tests TCP connectivity to one or more domain controllers on the ports required
+        for Active Directory and Netlogon communication: DNS (53), Kerberos (88),
+        RPC Endpoint Mapper (135), LDAP (389), SMB (445), Kerberos Password (464),
+        LDAPS (636), Global Catalog (3268), and Global Catalog SSL (3269).
+
+        If no DomainController is specified, the function discovers DCs via
+        nltest /dclist:<domain>.
+
+    .PARAMETER DomainController
+        One or more domain controller hostnames or IP addresses to test.
+        If not specified, DCs are discovered automatically from the current domain.
+
+    .PARAMETER Port
+        One or more specific ports to test. If not specified, all standard AD ports
+        are tested.
+
+    .PARAMETER TimeoutMs
+        Connection timeout in milliseconds. Defaults to 2000 (2 seconds).
+
+    .PARAMETER ComputerName
+        The computer to run the port tests from. Defaults to the local computer.
+
+    .EXAMPLE
+        Test-DCPortConnectivity
+        Tests all AD ports against all discovered domain controllers.
+
+    .EXAMPLE
+        Test-DCPortConnectivity -DomainController 'DC01.contoso.com' -Port 389,636
+        Tests only LDAP and LDAPS ports against a specific DC.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [string[]]$DomainController,
+
+        [int[]]$Port,
+
+        [int]$TimeoutMs = 2000,
+
+        [string]$ComputerName = $env:COMPUTERNAME
+    )
+
+    begin {
+        $PortDefinitions = @{
+            53   = 'DNS'
+            88   = 'Kerberos'
+            135  = 'RPC Endpoint Mapper'
+            389  = 'LDAP'
+            445  = 'SMB'
+            464  = 'Kerberos Password'
+            636  = 'LDAPS'
+            3268 = 'Global Catalog'
+            3269 = 'Global Catalog SSL'
+        }
+
+        if ($Port) {
+            $PortsToTest = $Port
+        }
+        else {
+            $PortsToTest = $PortDefinitions.Keys
+        }
+    }
+
+    process {
+        $IsLocal = ($ComputerName -eq $env:COMPUTERNAME) -or ($ComputerName -eq 'localhost') -or ($ComputerName -eq '.')
+
+        # Discover DCs if none specified
+        if (-not $DomainController) {
+            try {
+                $Domain = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
+                $DCListOutput = nltest /dclist:$Domain 2>&1 | Out-String
+                $DomainController = [regex]::Matches($DCListOutput, '\\\\(\S+)') | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -and $_ -ne 'The' }
+
+                if (-not $DomainController) {
+                    Write-Error 'Could not discover domain controllers. Specify -DomainController manually.'
+                    return
+                }
+                Write-Verbose "Discovered DCs: $($DomainController -join ', ')"
+            }
+            catch {
+                Write-Error "Failed to discover domain controllers: $_. Specify -DomainController manually."
+                return
+            }
+        }
+
+        foreach ($DC in $DomainController) {
+            foreach ($P in $PortsToTest) {
+                $PortName = if ($PortDefinitions.ContainsKey($P)) { $PortDefinitions[$P] } else { 'Custom' }
+
+                try {
+                    if ($IsLocal) {
+                        $TcpClient = [System.Net.Sockets.TcpClient]::new()
+                        try {
+                            $ConnectTask = $TcpClient.ConnectAsync($DC, $P)
+                            $Connected = $ConnectTask.Wait($TimeoutMs)
+                        }
+                        finally {
+                            $TcpClient.Dispose()
+                        }
+                    }
+                    else {
+                        $Connected = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+                            param($TargetDC, $TargetPort, $Timeout)
+                            $Tcp = [System.Net.Sockets.TcpClient]::new()
+                            try {
+                                $Task = $Tcp.ConnectAsync($TargetDC, $TargetPort)
+                                return $Task.Wait($Timeout)
+                            }
+                            finally {
+                                $Tcp.Dispose()
+                            }
+                        } -ArgumentList $DC, $P, $TimeoutMs
+                    }
+
+                    [PSCustomObject]@{
+                        PSTypeName       = 'NetlogonTroubleShooting.PortTest'
+                        SourceComputer   = $ComputerName
+                        DomainController = $DC
+                        Port             = $P
+                        Service          = $PortName
+                        Reachable        = $Connected
+                        TimeoutMs        = $TimeoutMs
+                    }
+                }
+                catch {
+                    [PSCustomObject]@{
+                        PSTypeName       = 'NetlogonTroubleShooting.PortTest'
+                        SourceComputer   = $ComputerName
+                        DomainController = $DC
+                        Port             = $P
+                        Service          = $PortName
+                        Reachable        = $false
+                        TimeoutMs        = $TimeoutMs
+                    }
+                }
+            }
+        }
+    }
+}
+
+#endregion
+
+#region Test-NetlogonDnsRecords
+
+function Test-NetlogonDnsRecords {
+    <#
+    .SYNOPSIS
+        Verifies that critical Netlogon/AD DNS SRV and A records are resolvable.
+
+    .DESCRIPTION
+        Queries DNS for the SRV records required by the DC locator process:
+        _ldap._tcp.dc._msdcs.<domain>, _kerberos._tcp.<domain>,
+        _ldap._tcp.<site>._sites.dc._msdcs.<domain>, and the forest
+        Global Catalog record _gc._tcp.<forest>. Also checks the domain A record.
+
+    .PARAMETER DomainName
+        The domain FQDN to check. Defaults to the current computer domain.
+
+    .PARAMETER SiteName
+        AD site name for site-specific SRV record checks. If not specified, the
+        current site is detected automatically.
+
+    .PARAMETER DnsServer
+        A specific DNS server to query instead of the default.
+
+    .EXAMPLE
+        Test-NetlogonDnsRecords
+        Checks all critical DNS records for the current domain and site.
+
+    .EXAMPLE
+        Test-NetlogonDnsRecords -DomainName 'contoso.com' -SiteName 'NYC'
+        Checks DNS records for the contoso.com domain scoped to the NYC site.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$DomainName,
+
+        [string]$SiteName,
+
+        [string]$DnsServer
+    )
+
+    begin {
+        # Discover domain if not specified
+        if (-not $DomainName) {
+            try {
+                $DomainName = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
+            }
+            catch {
+                Write-Error "Cannot determine domain name. Specify -DomainName. Error: $_"
+                return
+            }
+        }
+
+        # Discover forest root
+        $ForestName = $null
+        try {
+            $ForestName = ([System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest()).Name
+        }
+        catch {
+            $ForestName = $DomainName
+            Write-Verbose "Could not determine forest name, using domain name."
+        }
+
+        # Discover site if not specified
+        if (-not $SiteName) {
+            try {
+                $SiteName = [System.DirectoryServices.ActiveDirectory.ActiveDirectorySite]::GetComputerSite().Name
+            }
+            catch {
+                Write-Verbose "Could not detect AD site automatically."
+            }
+        }
+    }
+
+    process {
+        # Build list of records to check
+        $Records = @(
+            @{ Name = "_ldap._tcp.dc._msdcs.$DomainName"; Type = 'SRV'; Purpose = 'DC Locator (LDAP)' }
+            @{ Name = "_kerberos._tcp.dc._msdcs.$DomainName"; Type = 'SRV'; Purpose = 'DC Locator (Kerberos)' }
+            @{ Name = "_ldap._tcp.$DomainName"; Type = 'SRV'; Purpose = 'LDAP Service' }
+            @{ Name = "_kerberos._tcp.$DomainName"; Type = 'SRV'; Purpose = 'Kerberos Service' }
+            @{ Name = "_gc._tcp.$ForestName"; Type = 'SRV'; Purpose = 'Global Catalog' }
+            @{ Name = "_ldap._tcp.pdc._msdcs.$DomainName"; Type = 'SRV'; Purpose = 'PDC Locator' }
+            @{ Name = $DomainName; Type = 'A'; Purpose = 'Domain A Record' }
+        )
+
+        # Add site-specific records if site is known
+        if ($SiteName) {
+            $Records += @(
+                @{ Name = "_ldap._tcp.$SiteName._sites.dc._msdcs.$DomainName"; Type = 'SRV'; Purpose = "Site DC Locator ($SiteName)" }
+                @{ Name = "_kerberos._tcp.$SiteName._sites.dc._msdcs.$DomainName"; Type = 'SRV'; Purpose = "Site Kerberos Locator ($SiteName)" }
+            )
+        }
+
+        foreach ($Rec in $Records) {
+            $Resolved = $false
+            $Results = $null
+            $ErrorMsg = $null
+
+            try {
+                $DnsParams = @{
+                    Name        = $Rec.Name
+                    Type        = $Rec.Type
+                    ErrorAction = 'Stop'
+                }
+                if ($DnsServer) {
+                    $DnsParams['Server'] = $DnsServer
+                }
+
+                $Results = Resolve-DnsName @DnsParams
+                $Resolved = $true
+            }
+            catch {
+                $ErrorMsg = $_.Exception.Message
+            }
+
+            $TargetHosts = @()
+            if ($Results) {
+                if ($Rec.Type -eq 'SRV') {
+                    $TargetHosts = $Results | Where-Object { $_.QueryType -eq 'SRV' } | ForEach-Object { "$($_.NameTarget):$($_.Port)" }
+                }
+                else {
+                    $TargetHosts = $Results | Where-Object { $_.QueryType -eq 'A' -or $_.QueryType -eq 'AAAA' } | ForEach-Object { $_.IPAddress }
+                }
+            }
+
+            [PSCustomObject]@{
+                PSTypeName  = 'NetlogonTroubleShooting.DnsRecord'
+                RecordName  = $Rec.Name
+                RecordType  = $Rec.Type
+                Purpose     = $Rec.Purpose
+                Resolved    = $Resolved
+                ResultCount = ($TargetHosts | Measure-Object).Count
+                Targets     = ($TargetHosts -join '; ')
+                Error       = $ErrorMsg
+            }
+        }
+    }
+}
+
+#endregion
+
+#region Test-TimeSynchronization
+
+function Test-TimeSynchronization {
+    <#
+    .SYNOPSIS
+        Checks time synchronization between the local computer and its authenticating DC.
+
+    .DESCRIPTION
+        Compares the local system time against the authenticating domain controller.
+        Kerberos authentication fails when the time skew exceeds 5 minutes (default
+        MaxClockSkew). Reports the w32time service status and current time source.
+
+    .PARAMETER ComputerName
+        The computer to check. Defaults to the local computer.
+
+    .PARAMETER DomainController
+        A specific DC to compare time against. If not specified, the authenticating
+        DC is used.
+
+    .PARAMETER MaxSkewSeconds
+        The warning threshold in seconds. Defaults to 300 (5 minutes, the Kerberos default).
+
+    .EXAMPLE
+        Test-TimeSynchronization
+        Checks time sync of the local machine against its authenticating DC.
+
+    .EXAMPLE
+        Test-TimeSynchronization -ComputerName 'Server01' -MaxSkewSeconds 120
+        Checks time sync on Server01 with a 2-minute warning threshold.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [string[]]$ComputerName = $env:COMPUTERNAME,
+
+        [string]$DomainController,
+
+        [int]$MaxSkewSeconds = 300
+    )
+
+    process {
+        foreach ($Computer in $ComputerName) {
+            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.')
+
+            try {
+                # Get w32time status
+                $W32TimeSource = $null
+                $W32TimeStatus = $null
+
+                if ($IsLocal) {
+                    try {
+                        $W32Output = w32tm /query /status 2>&1 | Out-String
+                        $W32TimeStatus = $W32Output.Trim()
+                        if ($W32Output -match 'Source:\s*(.+)') {
+                            $W32TimeSource = $Matches[1].Trim()
+                        }
+                    }
+                    catch {
+                        $W32TimeStatus = "w32tm query failed: $_"
+                    }
+                }
+                else {
+                    try {
+                        $W32Output = Invoke-Command -ComputerName $Computer -ScriptBlock {
+                            w32tm /query /status 2>&1 | Out-String
+                        }
+                        $W32TimeStatus = $W32Output.Trim()
+                        if ($W32Output -match 'Source:\s*(.+)') {
+                            $W32TimeSource = $Matches[1].Trim()
+                        }
+                    }
+                    catch {
+                        $W32TimeStatus = "Remote w32tm query failed: $_"
+                    }
+                }
+
+                # Determine DC to compare against
+                $TargetDC = $DomainController
+                if (-not $TargetDC) {
+                    try {
+                        $Domain = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
+                        $DsGetDc = nltest /dsgetdc:$Domain 2>&1 | Out-String
+                        if ($DsGetDc -match 'DC:\s*\\\\(\S+)') {
+                            $TargetDC = $Matches[1]
+                        }
+                    }
+                    catch {
+                        Write-Verbose "Could not auto-detect authenticating DC."
+                    }
+                }
+
+                # Compare time
+                $LocalTime = $null
+                $DCTime = $null
+                $SkewSeconds = $null
+
+                if ($IsLocal) {
+                    $LocalTime = Get-Date
+                }
+                else {
+                    $LocalTime = Invoke-Command -ComputerName $Computer -ScriptBlock { Get-Date }
+                }
+
+                if ($TargetDC) {
+                    try {
+                        $DCTime = Invoke-Command -ComputerName $TargetDC -ScriptBlock { Get-Date }
+                        $SkewSeconds = [math]::Abs(($LocalTime - $DCTime).TotalSeconds)
+                    }
+                    catch {
+                        Write-Verbose "Could not get time from DC $TargetDC via WinRM: $_"
+                        # Fallback: use w32tm /stripchart for a single sample
+                        try {
+                            if ($IsLocal) {
+                                $StripChart = w32tm /stripchart /computer:$TargetDC /samples:1 /dataonly 2>&1 | Out-String
+                            }
+                            else {
+                                $StripChart = Invoke-Command -ComputerName $Computer -ScriptBlock {
+                                    param($DC)
+                                    w32tm /stripchart /computer:$DC /samples:1 /dataonly 2>&1 | Out-String
+                                } -ArgumentList $TargetDC
+                            }
+                            if ($StripChart -match '([+-]?\d+\.\d+)s') {
+                                $SkewSeconds = [math]::Abs([double]$Matches[1])
+                            }
+                        }
+                        catch {
+                            Write-Verbose "w32tm stripchart also failed: $_"
+                        }
+                    }
+                }
+
+                $SkewOK = if ($null -ne $SkewSeconds) { $SkewSeconds -lt $MaxSkewSeconds } else { $null }
+
+                [PSCustomObject]@{
+                    PSTypeName       = 'NetlogonTroubleShooting.TimeSync'
+                    ComputerName     = $Computer
+                    DomainController = $TargetDC
+                    LocalTime        = $LocalTime
+                    DCTime           = $DCTime
+                    SkewSeconds      = if ($null -ne $SkewSeconds) { [math]::Round($SkewSeconds, 2) } else { $null }
+                    WithinThreshold  = $SkewOK
+                    ThresholdSeconds = $MaxSkewSeconds
+                    TimeSource       = $W32TimeSource
+                    W32TimeStatus    = $W32TimeStatus
+                }
+
+                # Console feedback
+                if ($null -eq $SkewSeconds) {
+                    Write-Host "Time synchronization on $Computer : could not determine skew." -ForegroundColor Yellow
+                }
+                elseif ($SkewOK) {
+                    Write-Host "Time synchronization on $Computer : OK (skew: $([math]::Round($SkewSeconds,1))s)." -ForegroundColor Green
+                }
+                else {
+                    Write-Host "Time synchronization on $Computer : WARNING — skew $([math]::Round($SkewSeconds,1))s exceeds ${MaxSkewSeconds}s threshold!" -ForegroundColor Red
+                }
+            }
+            catch {
+                Write-Error "Failed to check time synchronization on $Computer : $_"
+            }
+        }
+    }
+}
+
+#endregion
+
+#region Get-DCLocatorInfo
+
+function Get-DCLocatorInfo {
+    <#
+    .SYNOPSIS
+        Retrieves parsed DC locator information via nltest /dsgetdc.
+
+    .DESCRIPTION
+        Runs nltest /dsgetdc:<domain> and parses the output into a structured object.
+        Supports flags for force rediscovery, specific site, PDC only, KDC only, time
+        server only, and writable DC only. Helps diagnose "wrong DC" or "no DC found".
+
+    .PARAMETER DomainName
+        The domain to query. Defaults to the current computer domain.
+
+    .PARAMETER SiteName
+        Restrict DC discovery to a specific AD site.
+
+    .PARAMETER ForceRediscovery
+        Force a fresh DC discovery bypassing the cache.
+
+    .PARAMETER PDC
+        Return only the PDC emulator.
+
+    .PARAMETER KDC
+        Return only a Kerberos Distribution Center.
+
+    .PARAMETER TimeServer
+        Return only a time server.
+
+    .PARAMETER WritableRequired
+        Return only a writable (non-RODC) domain controller.
+
+    .PARAMETER ComputerName
+        The computer to run the DC locator from. Defaults to the local computer.
+
+    .EXAMPLE
+        Get-DCLocatorInfo
+        Returns DC locator info for the current domain.
+
+    .EXAMPLE
+        Get-DCLocatorInfo -ForceRediscovery -SiteName 'NYC'
+        Forces fresh DC discovery for the NYC site.
+
+    .EXAMPLE
+        Get-DCLocatorInfo -PDC
+        Returns only the PDC emulator.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$DomainName,
+
+        [string]$SiteName,
+
+        [switch]$ForceRediscovery,
+
+        [switch]$PDC,
+
+        [switch]$KDC,
+
+        [switch]$TimeServer,
+
+        [switch]$WritableRequired,
+
+        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [string]$ComputerName = $env:COMPUTERNAME
+    )
+
+    process {
+        $IsLocal = ($ComputerName -eq $env:COMPUTERNAME) -or ($ComputerName -eq 'localhost') -or ($ComputerName -eq '.')
+
+        # Discover domain if not specified
+        if (-not $DomainName) {
+            try {
+                $DomainName = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
+            }
+            catch {
+                Write-Error "Cannot determine domain name. Specify -DomainName. Error: $_"
+                return
+            }
+        }
+
+        # Build nltest arguments
+        $NltestArgs = @("/dsgetdc:$DomainName")
+        if ($ForceRediscovery) { $NltestArgs += '/force' }
+        if ($SiteName) { $NltestArgs += "/site:$SiteName" }
+        if ($PDC) { $NltestArgs += '/pdc' }
+        if ($KDC) { $NltestArgs += '/kdc' }
+        if ($TimeServer) { $NltestArgs += '/timeserv' }
+        if ($WritableRequired) { $NltestArgs += '/writable' }
+
+        try {
+            if ($IsLocal) {
+                $Output = & nltest @NltestArgs 2>&1 | Out-String
+            }
+            else {
+                $Output = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+                    param($Args)
+                    & nltest @Args 2>&1 | Out-String
+                } -ArgumentList (, $NltestArgs)
+            }
+
+            $OutputTrimmed = $Output.Trim()
+
+            # Parse fields
+            $DCName = $null
+            $DCAddress = $null
+            $DomainGuid = $null
+            $DCSiteName = $null
+            $ClientSiteName = $null
+            $DCFlags = $null
+
+            if ($OutputTrimmed -match 'DC:\s*\\\\(\S+)') { $DCName = $Matches[1] }
+            if ($OutputTrimmed -match 'Address:\s*\\\\(\S+)') { $DCAddress = $Matches[1] }
+            if ($OutputTrimmed -match 'Dom Guid:\s*(\S+)') { $DomainGuid = $Matches[1] }
+            if ($OutputTrimmed -match 'DC Site Name:\s*(\S+)') { $DCSiteName = $Matches[1] }
+            if ($OutputTrimmed -match 'Our Site Name:\s*(\S+)') { $ClientSiteName = $Matches[1] }
+            if ($OutputTrimmed -match 'Flags:\s*(.+)') { $DCFlags = $Matches[1].Trim() }
+
+            $Success = $OutputTrimmed -match 'NERR_Success' -or $null -ne $DCName
+
+            [PSCustomObject]@{
+                PSTypeName      = 'NetlogonTroubleShooting.DCLocator'
+                ComputerName    = $ComputerName
+                DomainName      = $DomainName
+                DCName          = $DCName
+                DCAddress       = $DCAddress
+                DCSiteName      = $DCSiteName
+                ClientSiteName  = $ClientSiteName
+                DomainGuid      = $DomainGuid
+                Flags           = $DCFlags
+                ForceRediscovery = $ForceRediscovery.IsPresent
+                RequestedSite   = $SiteName
+                Success         = $Success
+                RawOutput       = $OutputTrimmed
+            }
+
+            if ($Success) {
+                Write-Host "DC located: $DCName ($DCAddress) in site $DCSiteName." -ForegroundColor Green
+                if ($ClientSiteName -and $DCSiteName -and $ClientSiteName -ne $DCSiteName) {
+                    Write-Host "WARNING: Client site '$ClientSiteName' differs from DC site '$DCSiteName'. Cross-site authentication." -ForegroundColor Yellow
+                }
+            }
+            else {
+                Write-Host "DC locator FAILED for $DomainName." -ForegroundColor Red
+                Write-Host $OutputTrimmed -ForegroundColor Red
+            }
+        }
+        catch {
+            Write-Error "DC locator failed on $ComputerName : $_"
+        }
+    }
+}
+
+#endregion
+
+#region Get-ADSiteInfo
+
+function Get-ADSiteInfo {
+    <#
+    .SYNOPSIS
+        Shows AD site assignment, subnet mapping, and DCs in the site.
+
+    .DESCRIPTION
+        Retrieves the AD site the computer is assigned to, lists all subnets
+        associated with that site, and enumerates the domain controllers
+        in the site. Helps detect NO_CLIENT_SITE conditions where the client
+        IP does not match any defined AD subnet.
+
+    .PARAMETER ComputerName
+        The computer to check. Defaults to the local computer.
+
+    .PARAMETER SiteName
+        Query a specific site instead of the computer's assigned site.
+
+    .EXAMPLE
+        Get-ADSiteInfo
+        Shows site information for the local computer.
+
+    .EXAMPLE
+        Get-ADSiteInfo -SiteName 'NYC'
+        Shows information about the NYC site.
+
+    .EXAMPLE
+        Get-ADSiteInfo -ComputerName 'Server01','Server02'
+        Shows site information for multiple computers.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [string[]]$ComputerName = $env:COMPUTERNAME,
+
+        [string]$SiteName
+    )
+
+    process {
+        foreach ($Computer in $ComputerName) {
+            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.')
+
+            try {
+                # Determine the site for this computer
+                $AssignedSite = $SiteName
+                $ClientIP = $null
+                $NoClientSite = $false
+
+                if (-not $AssignedSite) {
+                    try {
+                        if ($IsLocal) {
+                            $AssignedSite = [System.DirectoryServices.ActiveDirectory.ActiveDirectorySite]::GetComputerSite().Name
+                        }
+                        else {
+                            $AssignedSite = Invoke-Command -ComputerName $Computer -ScriptBlock {
+                                [System.DirectoryServices.ActiveDirectory.ActiveDirectorySite]::GetComputerSite().Name
+                            }
+                        }
+                    }
+                    catch {
+                        $NoClientSite = $true
+                        Write-Verbose "Could not determine site for $Computer : $_"
+                    }
+                }
+
+                # Get client IP
+                if ($IsLocal) {
+                    $ClientIP = (Get-NetIPAddress -AddressFamily IPv4 -Type Unicast -ErrorAction SilentlyContinue |
+                                 Where-Object { $_.IPAddress -ne '127.0.0.1' } |
+                                 Select-Object -First 1).IPAddress
+                }
+                else {
+                    try {
+                        $ClientIP = Invoke-Command -ComputerName $Computer -ScriptBlock {
+                            (Get-NetIPAddress -AddressFamily IPv4 -Type Unicast -ErrorAction SilentlyContinue |
+                             Where-Object { $_.IPAddress -ne '127.0.0.1' } |
+                             Select-Object -First 1).IPAddress
+                        }
+                    }
+                    catch {
+                        Write-Verbose "Could not get IP from $Computer : $_"
+                    }
+                }
+
+                # Get site details via System.DirectoryServices
+                $SiteSubnets = @()
+                $SiteDCs = @()
+                $SiteLinks = @()
+
+                if ($AssignedSite) {
+                    try {
+                        $DirectoryContext = [System.DirectoryServices.ActiveDirectory.DirectoryContext]::new(
+                            [System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Forest
+                        )
+                        $Forest = [System.DirectoryServices.ActiveDirectory.Forest]::GetForest($DirectoryContext)
+                        $AllSites = $Forest.Sites
+
+                        $Site = $AllSites | Where-Object { $_.Name -eq $AssignedSite }
+
+                        if ($Site) {
+                            $SiteSubnets = @($Site.Subnets | ForEach-Object { $_.Name })
+                            $SiteDCs = @($Site.Servers | ForEach-Object { $_.Name })
+                            $SiteLinks = @($Site.SiteLinks | ForEach-Object { $_.Name })
+                        }
+                    }
+                    catch {
+                        Write-Verbose "Could not enumerate site details: $_"
+
+                        # Fallback: use nltest /dsgetsite and /dclist
+                        try {
+                            $DomainName = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
+                            $DCListOutput = nltest /dclist:$DomainName 2>&1 | Out-String
+                            $SiteDCs = [regex]::Matches($DCListOutput, '\\\\(\S+)') |
+                                       ForEach-Object { $_.Groups[1].Value } |
+                                       Where-Object { $_ -and $_ -ne 'The' }
+                        }
+                        catch {
+                            Write-Verbose "Fallback nltest also failed: $_"
+                        }
+                    }
+                }
+
+                # Also check via nltest /dsgetsite for the canonical site assignment
+                $NltestSite = $null
+                try {
+                    if ($IsLocal) {
+                        $NltestSiteOutput = nltest /dsgetsite 2>&1 | Out-String
+                    }
+                    else {
+                        $NltestSiteOutput = Invoke-Command -ComputerName $Computer -ScriptBlock {
+                            nltest /dsgetsite 2>&1 | Out-String
+                        }
+                    }
+                    # First line is the site name
+                    $NltestSite = ($NltestSiteOutput.Trim() -split "`n")[0].Trim()
+                }
+                catch {
+                    Write-Verbose "nltest /dsgetsite failed: $_"
+                }
+
+                [PSCustomObject]@{
+                    PSTypeName    = 'NetlogonTroubleShooting.SiteInfo'
+                    ComputerName  = $Computer
+                    ClientIP      = $ClientIP
+                    AssignedSite  = if ($AssignedSite) { $AssignedSite } else { 'NO_CLIENT_SITE' }
+                    NltestSite    = $NltestSite
+                    NoClientSite  = $NoClientSite
+                    Subnets       = $SiteSubnets -join '; '
+                    SubnetCount   = $SiteSubnets.Count
+                    DCs           = $SiteDCs -join '; '
+                    DCCount       = $SiteDCs.Count
+                    SiteLinks     = $SiteLinks -join '; '
+                }
+
+                # Console feedback
+                if ($NoClientSite) {
+                    Write-Host "$Computer : NO_CLIENT_SITE detected! The computer IP ($ClientIP) does not match any AD subnet." -ForegroundColor Red
+                    Write-Host "  Create a subnet in AD Sites and Services covering this IP range." -ForegroundColor Yellow
+                }
+                else {
+                    Write-Host "$Computer : Site '$AssignedSite' ($($SiteDCs.Count) DCs, $($SiteSubnets.Count) subnets)." -ForegroundColor Green
+                }
+            }
+            catch {
+                Write-Error "Failed to get site info for $Computer : $_"
+            }
+        }
+    }
+}
+
+#endregion
+
+#region Invoke-NetlogonDiagnostic
+
+function Invoke-NetlogonDiagnostic {
+    <#
+    .SYNOPSIS
+        Runs a comprehensive Netlogon diagnostic check and produces a consolidated report.
+
+    .DESCRIPTION
+        Executes all diagnostic functions in the NetlogonTroubleShooting module in a
+        single pass and produces a consolidated text or HTML report. Checks include:
+        - Netlogon service status
+        - Secure channel health
+        - DC locator results
+        - AD site assignment
+        - DNS record validation
+        - DC port connectivity
+        - Time synchronization
+        - Debug logging status
+        - Recent Netlogon events
+
+    .PARAMETER ComputerName
+        The computer to diagnose. Defaults to the local computer.
+
+    .PARAMETER OutputFormat
+        The report format: Text (default) or HTML.
+
+    .PARAMETER OutputPath
+        If specified, saves the report to this file path. Otherwise outputs to console/pipeline.
+
+    .EXAMPLE
+        Invoke-NetlogonDiagnostic
+        Runs all checks and displays a text report.
+
+    .EXAMPLE
+        Invoke-NetlogonDiagnostic -OutputFormat HTML -OutputPath 'C:\Reports\netlogon.html'
+        Generates an HTML diagnostic report and saves it.
+
+    .EXAMPLE
+        Invoke-NetlogonDiagnostic -ComputerName 'Server01'
+        Diagnoses Server01 remotely.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [string]$ComputerName = $env:COMPUTERNAME,
+
+        [ValidateSet('Text', 'HTML')]
+        [string]$OutputFormat = 'Text',
+
+        [string]$OutputPath
+    )
+
+    process {
+        $Timestamp = Get-Date
+        $IsLocal = ($ComputerName -eq $env:COMPUTERNAME) -or ($ComputerName -eq 'localhost') -or ($ComputerName -eq '.')
+
+        Write-Host "`n========================================" -ForegroundColor Cyan
+        Write-Host " Netlogon Diagnostic Report" -ForegroundColor Cyan
+        Write-Host " Computer : $ComputerName" -ForegroundColor Cyan
+        Write-Host " Time     : $Timestamp" -ForegroundColor Cyan
+        Write-Host "========================================`n" -ForegroundColor Cyan
+
+        $Report = [ordered]@{}
+
+        # 1. Netlogon Service Status
+        Write-Host "[1/8] Netlogon Service Status..." -ForegroundColor White
+        try {
+            $Report['NetlogonStatus'] = Get-NetlogonStatus -ComputerName $ComputerName -ErrorAction Stop
+        }
+        catch {
+            $Report['NetlogonStatus'] = "Error: $_"
+            Write-Warning "Netlogon status check failed: $_"
+        }
+
+        # 2. Secure Channel
+        Write-Host "[2/8] Secure Channel Health..." -ForegroundColor White
+        try {
+            $Report['SecureChannel'] = Test-NetlogonSecureChannel -ComputerName $ComputerName -ErrorAction Stop
+        }
+        catch {
+            $Report['SecureChannel'] = "Error: $_"
+            Write-Warning "Secure channel check failed: $_"
+        }
+
+        # 3. DC Locator
+        Write-Host "[3/8] DC Locator..." -ForegroundColor White
+        try {
+            $Report['DCLocator'] = Get-DCLocatorInfo -ComputerName $ComputerName -ErrorAction Stop
+        }
+        catch {
+            $Report['DCLocator'] = "Error: $_"
+            Write-Warning "DC locator check failed: $_"
+        }
+
+        # 4. AD Site Info
+        Write-Host "[4/8] AD Site Information..." -ForegroundColor White
+        try {
+            $Report['SiteInfo'] = Get-ADSiteInfo -ComputerName $ComputerName -ErrorAction Stop
+        }
+        catch {
+            $Report['SiteInfo'] = "Error: $_"
+            Write-Warning "Site info check failed: $_"
+        }
+
+        # 5. DNS Records
+        Write-Host "[5/8] DNS Record Validation..." -ForegroundColor White
+        try {
+            $Report['DnsRecords'] = Test-NetlogonDnsRecords -ErrorAction Stop
+        }
+        catch {
+            $Report['DnsRecords'] = "Error: $_"
+            Write-Warning "DNS record check failed: $_"
+        }
+
+        # 6. DC Port Connectivity
+        Write-Host "[6/8] DC Port Connectivity..." -ForegroundColor White
+        try {
+            $Report['PortConnectivity'] = Test-DCPortConnectivity -ComputerName $ComputerName -ErrorAction Stop
+        }
+        catch {
+            $Report['PortConnectivity'] = "Error: $_"
+            Write-Warning "Port connectivity check failed: $_"
+        }
+
+        # 7. Time Sync
+        Write-Host "[7/8] Time Synchronization..." -ForegroundColor White
+        try {
+            $Report['TimeSync'] = Test-TimeSynchronization -ComputerName $ComputerName -ErrorAction Stop
+        }
+        catch {
+            $Report['TimeSync'] = "Error: $_"
+            Write-Warning "Time sync check failed: $_"
+        }
+
+        # 8. Recent Netlogon Events
+        Write-Host "[8/8] Recent Netlogon Events (last 24h)..." -ForegroundColor White
+        try {
+            $Report['Events'] = Get-NetlogonEvent -ComputerName $ComputerName -MaxEvents 20 -ErrorAction SilentlyContinue
+        }
+        catch {
+            $Report['Events'] = "Error: $_"
+        }
+
+        # Also capture debug logging status
+        try {
+            $Report['DebugStatus'] = Get-NetlogonDebugStatus -ComputerName $ComputerName -ErrorAction SilentlyContinue
+        }
+        catch {
+            $Report['DebugStatus'] = $null
+        }
+
+        # Build output
+        if ($OutputFormat -eq 'HTML') {
+            $Html = _Format-DiagnosticHtml -Report $Report -ComputerName $ComputerName -Timestamp $Timestamp
+            if ($OutputPath) {
+                $Html | Set-Content -Path $OutputPath -Encoding UTF8 -Force
+                Write-Host "`nHTML report saved to: $OutputPath" -ForegroundColor Green
+            }
+            else {
+                $Html
+            }
+        }
+        else {
+            $Text = _Format-DiagnosticText -Report $Report -ComputerName $ComputerName -Timestamp $Timestamp
+            if ($OutputPath) {
+                $Text | Set-Content -Path $OutputPath -Encoding UTF8 -Force
+                Write-Host "`nText report saved to: $OutputPath" -ForegroundColor Green
+            }
+            else {
+                $Text
+            }
+        }
+
+        # Return structured data as well
+        [PSCustomObject]@{
+            PSTypeName    = 'NetlogonTroubleShooting.DiagnosticReport'
+            ComputerName  = $ComputerName
+            Timestamp     = $Timestamp
+            Results       = $Report
+        }
+    }
+}
+
+# Private helper: format text report
+function _Format-DiagnosticText {
+    param(
+        [hashtable]$Report,
+        [string]$ComputerName,
+        [datetime]$Timestamp
+    )
+
+    $Sb = [System.Text.StringBuilder]::new()
+    $null = $Sb.AppendLine('=' * 72)
+    $null = $Sb.AppendLine("  NETLOGON DIAGNOSTIC REPORT")
+    $null = $Sb.AppendLine("  Computer : $ComputerName")
+    $null = $Sb.AppendLine("  Generated: $Timestamp")
+    $null = $Sb.AppendLine('=' * 72)
+    $null = $Sb.AppendLine()
+
+    # -- Netlogon Status --
+    $null = $Sb.AppendLine('--- Netlogon Service Status ---')
+    $Status = $Report['NetlogonStatus']
+    if ($Status -is [PSObject] -and $Status.ServiceStatus) {
+        $null = $Sb.AppendLine("  Service         : $($Status.ServiceStatus)")
+        $null = $Sb.AppendLine("  Start Type      : $($Status.ServiceStartType)")
+        $null = $Sb.AppendLine("  Domain          : $($Status.DomainName)")
+        $null = $Sb.AppendLine("  Auth DC         : $($Status.AuthenticatingDC)")
+        $null = $Sb.AppendLine("  Secure Channel  : $(if ($Status.SecureChannelHealthy) { 'Healthy' } else { 'UNHEALTHY' })")
+        $null = $Sb.AppendLine("  Debug Logging   : $(if ($Status.DebugLoggingEnabled) { "$($Status.DebugLevel)" } else { 'Disabled' })")
+    }
+    else {
+        $null = $Sb.AppendLine("  $Status")
+    }
+    $null = $Sb.AppendLine()
+
+    # -- Secure Channel --
+    $null = $Sb.AppendLine('--- Secure Channel ---')
+    $SC = $Report['SecureChannel']
+    if ($SC -is [PSObject] -and $null -ne $SC.SecureChannelOK) {
+        $null = $Sb.AppendLine("  Status : $(if ($SC.SecureChannelOK) { 'OK' } else { 'BROKEN' })")
+        $null = $Sb.AppendLine("  DC     : $($SC.DCName)")
+        if ($SC.Recommendations.Count -gt 0) {
+            $null = $Sb.AppendLine("  Recommendations:")
+            foreach ($Rec in $SC.Recommendations) {
+                $null = $Sb.AppendLine("    - $Rec")
+            }
+        }
+    }
+    else {
+        $null = $Sb.AppendLine("  $SC")
+    }
+    $null = $Sb.AppendLine()
+
+    # -- DC Locator --
+    $null = $Sb.AppendLine('--- DC Locator ---')
+    $DCL = $Report['DCLocator']
+    if ($DCL -is [PSObject] -and $DCL.DCName) {
+        $null = $Sb.AppendLine("  DC Name     : $($DCL.DCName)")
+        $null = $Sb.AppendLine("  DC Address  : $($DCL.DCAddress)")
+        $null = $Sb.AppendLine("  DC Site     : $($DCL.DCSiteName)")
+        $null = $Sb.AppendLine("  Client Site : $($DCL.ClientSiteName)")
+        $null = $Sb.AppendLine("  Flags       : $($DCL.Flags)")
+    }
+    else {
+        $null = $Sb.AppendLine("  $DCL")
+    }
+    $null = $Sb.AppendLine()
+
+    # -- Site Info --
+    $null = $Sb.AppendLine('--- AD Site Information ---')
+    $SI = $Report['SiteInfo']
+    if ($SI -is [PSObject] -and $SI.AssignedSite) {
+        $null = $Sb.AppendLine("  Assigned Site  : $($SI.AssignedSite)")
+        $null = $Sb.AppendLine("  Client IP      : $($SI.ClientIP)")
+        $null = $Sb.AppendLine("  NO_CLIENT_SITE : $(if ($SI.NoClientSite) { 'YES — action required!' } else { 'No' })")
+        $null = $Sb.AppendLine("  Subnets ($($SI.SubnetCount)): $($SI.Subnets)")
+        $null = $Sb.AppendLine("  DCs ($($SI.DCCount))    : $($SI.DCs)")
+        $null = $Sb.AppendLine("  Site Links     : $($SI.SiteLinks)")
+    }
+    else {
+        $null = $Sb.AppendLine("  $SI")
+    }
+    $null = $Sb.AppendLine()
+
+    # -- DNS Records --
+    $null = $Sb.AppendLine('--- DNS Record Validation ---')
+    $DNS = $Report['DnsRecords']
+    if ($DNS -is [System.Array] -or $DNS -is [PSObject[]]) {
+        foreach ($D in $DNS) {
+            $StatusMark = if ($D.Resolved) { '[OK]  ' } else { '[FAIL]' }
+            $null = $Sb.AppendLine("  $StatusMark $($D.Purpose): $($D.RecordName)")
+            if ($D.Resolved) {
+                $null = $Sb.AppendLine("         Targets: $($D.Targets)")
+            }
+            else {
+                $null = $Sb.AppendLine("         Error: $($D.Error)")
+            }
+        }
+    }
+    else {
+        $null = $Sb.AppendLine("  $DNS")
+    }
+    $null = $Sb.AppendLine()
+
+    # -- Port Connectivity --
+    $null = $Sb.AppendLine('--- DC Port Connectivity ---')
+    $Ports = $Report['PortConnectivity']
+    if ($Ports -is [System.Array] -or $Ports -is [PSObject[]]) {
+        $GroupedByDC = $Ports | Group-Object DomainController
+        foreach ($DCGroup in $GroupedByDC) {
+            $null = $Sb.AppendLine("  DC: $($DCGroup.Name)")
+            foreach ($PT in $DCGroup.Group) {
+                $StatusMark = if ($PT.Reachable) { '[OK]  ' } else { '[FAIL]' }
+                $null = $Sb.AppendLine("    $StatusMark Port $($PT.Port) ($($PT.Service))")
+            }
+        }
+    }
+    else {
+        $null = $Sb.AppendLine("  $Ports")
+    }
+    $null = $Sb.AppendLine()
+
+    # -- Time Sync --
+    $null = $Sb.AppendLine('--- Time Synchronization ---')
+    $TS = $Report['TimeSync']
+    if ($TS -is [PSObject] -and $null -ne $TS.SkewSeconds) {
+        $null = $Sb.AppendLine("  DC             : $($TS.DomainController)")
+        $null = $Sb.AppendLine("  Skew           : $($TS.SkewSeconds)s")
+        $null = $Sb.AppendLine("  Within Limit   : $(if ($TS.WithinThreshold) { 'Yes' } else { 'NO — Kerberos may fail!' })")
+        $null = $Sb.AppendLine("  Time Source    : $($TS.TimeSource)")
+    }
+    elseif ($TS -is [PSObject]) {
+        $null = $Sb.AppendLine("  Time Source    : $($TS.TimeSource)")
+        $null = $Sb.AppendLine("  Skew           : Could not determine")
+    }
+    else {
+        $null = $Sb.AppendLine("  $TS")
+    }
+    $null = $Sb.AppendLine()
+
+    # -- Recent Events --
+    $null = $Sb.AppendLine('--- Recent Netlogon Events (last 24h) ---')
+    $Evts = $Report['Events']
+    if ($Evts -is [System.Array] -and $Evts.Count -gt 0) {
+        foreach ($E in $Evts | Select-Object -First 20) {
+            $null = $Sb.AppendLine("  [$($E.TimeCreated)] EventID $($E.EventId) — $($E.Summary)")
+        }
+    }
+    else {
+        $null = $Sb.AppendLine("  No Netlogon events found in the last 24 hours.")
+    }
+    $null = $Sb.AppendLine()
+    $null = $Sb.AppendLine('=' * 72)
+    $null = $Sb.AppendLine("  End of Netlogon Diagnostic Report")
+    $null = $Sb.AppendLine('=' * 72)
+
+    $Sb.ToString()
+}
+
+# Private helper: format HTML report
+function _Format-DiagnosticHtml {
+    param(
+        [hashtable]$Report,
+        [string]$ComputerName,
+        [datetime]$Timestamp
+    )
+
+    $Sb = [System.Text.StringBuilder]::new()
+    $null = $Sb.AppendLine(@"
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Netlogon Diagnostic — $([System.Net.WebUtility]::HtmlEncode($ComputerName))</title>
+<style>
+  body { font-family: Segoe UI, Calibri, sans-serif; margin: 2em; background: #f5f5f5; }
+  h1 { color: #0078d4; }
+  h2 { color: #333; border-bottom: 2px solid #0078d4; padding-bottom: 4px; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 1.5em; }
+  th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
+  th { background: #0078d4; color: #fff; }
+  tr:nth-child(even) { background: #e9e9e9; }
+  .ok { color: green; font-weight: bold; }
+  .fail { color: red; font-weight: bold; }
+  .warn { color: orange; font-weight: bold; }
+  .section { background: #fff; padding: 1em 1.5em; margin-bottom: 1em; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+</style>
+</head><body>
+<h1>Netlogon Diagnostic Report</h1>
+<p><strong>Computer:</strong> $([System.Net.WebUtility]::HtmlEncode($ComputerName)) &nbsp;|&nbsp; <strong>Generated:</strong> $([System.Net.WebUtility]::HtmlEncode($Timestamp.ToString()))</p>
+"@)
+
+    # Netlogon Status
+    $Status = $Report['NetlogonStatus']
+    $null = $Sb.AppendLine('<div class="section"><h2>Netlogon Service Status</h2>')
+    if ($Status -is [PSObject] -and $Status.ServiceStatus) {
+        $SCClass = if ($Status.SecureChannelHealthy) { 'ok' } else { 'fail' }
+        $null = $Sb.AppendLine("<table><tr><th>Property</th><th>Value</th></tr>")
+        $null = $Sb.AppendLine("<tr><td>Service</td><td>$([System.Net.WebUtility]::HtmlEncode($Status.ServiceStatus))</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>Domain</td><td>$([System.Net.WebUtility]::HtmlEncode($Status.DomainName))</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>Auth DC</td><td>$([System.Net.WebUtility]::HtmlEncode($Status.AuthenticatingDC))</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>Secure Channel</td><td class='$SCClass'>$(if ($Status.SecureChannelHealthy) { 'Healthy' } else { 'UNHEALTHY' })</td></tr>")
+        $null = $Sb.AppendLine("</table>")
+    }
+    else { $null = $Sb.AppendLine("<p>$([System.Net.WebUtility]::HtmlEncode("$Status"))</p>") }
+    $null = $Sb.AppendLine('</div>')
+
+    # DC Locator
+    $DCL = $Report['DCLocator']
+    $null = $Sb.AppendLine('<div class="section"><h2>DC Locator</h2>')
+    if ($DCL -is [PSObject] -and $DCL.DCName) {
+        $null = $Sb.AppendLine("<table><tr><th>Property</th><th>Value</th></tr>")
+        $null = $Sb.AppendLine("<tr><td>DC Name</td><td>$([System.Net.WebUtility]::HtmlEncode($DCL.DCName))</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>DC Address</td><td>$([System.Net.WebUtility]::HtmlEncode($DCL.DCAddress))</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>DC Site</td><td>$([System.Net.WebUtility]::HtmlEncode($DCL.DCSiteName))</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>Client Site</td><td>$([System.Net.WebUtility]::HtmlEncode($DCL.ClientSiteName))</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>Flags</td><td>$([System.Net.WebUtility]::HtmlEncode($DCL.Flags))</td></tr>")
+        $null = $Sb.AppendLine("</table>")
+    }
+    else { $null = $Sb.AppendLine("<p>$([System.Net.WebUtility]::HtmlEncode("$DCL"))</p>") }
+    $null = $Sb.AppendLine('</div>')
+
+    # Site Info
+    $SI = $Report['SiteInfo']
+    $null = $Sb.AppendLine('<div class="section"><h2>AD Site Information</h2>')
+    if ($SI -is [PSObject] -and $SI.AssignedSite) {
+        $SiteClass = if ($SI.NoClientSite) { 'fail' } else { 'ok' }
+        $null = $Sb.AppendLine("<table><tr><th>Property</th><th>Value</th></tr>")
+        $null = $Sb.AppendLine("<tr><td>Assigned Site</td><td class='$SiteClass'>$([System.Net.WebUtility]::HtmlEncode($SI.AssignedSite))</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>Client IP</td><td>$([System.Net.WebUtility]::HtmlEncode($SI.ClientIP))</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>Subnets</td><td>$([System.Net.WebUtility]::HtmlEncode($SI.Subnets))</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>DCs in Site</td><td>$([System.Net.WebUtility]::HtmlEncode($SI.DCs))</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>Site Links</td><td>$([System.Net.WebUtility]::HtmlEncode($SI.SiteLinks))</td></tr>")
+        $null = $Sb.AppendLine("</table>")
+    }
+    else { $null = $Sb.AppendLine("<p>$([System.Net.WebUtility]::HtmlEncode("$SI"))</p>") }
+    $null = $Sb.AppendLine('</div>')
+
+    # DNS Records
+    $DNS = $Report['DnsRecords']
+    $null = $Sb.AppendLine('<div class="section"><h2>DNS Record Validation</h2>')
+    if ($DNS -is [System.Array] -or $DNS -is [PSObject[]]) {
+        $null = $Sb.AppendLine("<table><tr><th>Status</th><th>Purpose</th><th>Record</th><th>Targets</th></tr>")
+        foreach ($D in $DNS) {
+            $DClass = if ($D.Resolved) { 'ok' } else { 'fail' }
+            $DStatus = if ($D.Resolved) { 'OK' } else { 'FAIL' }
+            $DTargets = if ($D.Resolved) { [System.Net.WebUtility]::HtmlEncode($D.Targets) } else { [System.Net.WebUtility]::HtmlEncode($D.Error) }
+            $null = $Sb.AppendLine("<tr><td class='$DClass'>$DStatus</td><td>$([System.Net.WebUtility]::HtmlEncode($D.Purpose))</td><td>$([System.Net.WebUtility]::HtmlEncode($D.RecordName))</td><td>$DTargets</td></tr>")
+        }
+        $null = $Sb.AppendLine("</table>")
+    }
+    else { $null = $Sb.AppendLine("<p>$([System.Net.WebUtility]::HtmlEncode("$DNS"))</p>") }
+    $null = $Sb.AppendLine('</div>')
+
+    # Port Connectivity
+    $Ports = $Report['PortConnectivity']
+    $null = $Sb.AppendLine('<div class="section"><h2>DC Port Connectivity</h2>')
+    if ($Ports -is [System.Array] -or $Ports -is [PSObject[]]) {
+        $null = $Sb.AppendLine("<table><tr><th>DC</th><th>Port</th><th>Service</th><th>Status</th></tr>")
+        foreach ($PT in $Ports) {
+            $PClass = if ($PT.Reachable) { 'ok' } else { 'fail' }
+            $PStatus = if ($PT.Reachable) { 'Open' } else { 'BLOCKED' }
+            $null = $Sb.AppendLine("<tr><td>$([System.Net.WebUtility]::HtmlEncode($PT.DomainController))</td><td>$($PT.Port)</td><td>$([System.Net.WebUtility]::HtmlEncode($PT.Service))</td><td class='$PClass'>$PStatus</td></tr>")
+        }
+        $null = $Sb.AppendLine("</table>")
+    }
+    else { $null = $Sb.AppendLine("<p>$([System.Net.WebUtility]::HtmlEncode("$Ports"))</p>") }
+    $null = $Sb.AppendLine('</div>')
+
+    # Time Sync
+    $TS = $Report['TimeSync']
+    $null = $Sb.AppendLine('<div class="section"><h2>Time Synchronization</h2>')
+    if ($TS -is [PSObject] -and $null -ne $TS.ComputerName) {
+        $TClass = if ($TS.WithinThreshold -eq $true) { 'ok' } elseif ($null -eq $TS.WithinThreshold) { 'warn' } else { 'fail' }
+        $null = $Sb.AppendLine("<table><tr><th>Property</th><th>Value</th></tr>")
+        $null = $Sb.AppendLine("<tr><td>DC</td><td>$([System.Net.WebUtility]::HtmlEncode($TS.DomainController))</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>Skew</td><td class='$TClass'>$(if ($null -ne $TS.SkewSeconds) { "$($TS.SkewSeconds)s" } else { 'Unknown' })</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>Time Source</td><td>$([System.Net.WebUtility]::HtmlEncode($TS.TimeSource))</td></tr>")
+        $null = $Sb.AppendLine("</table>")
+    }
+    else { $null = $Sb.AppendLine("<p>$([System.Net.WebUtility]::HtmlEncode("$TS"))</p>") }
+    $null = $Sb.AppendLine('</div>')
+
+    # Recent Events
+    $Evts = $Report['Events']
+    $null = $Sb.AppendLine('<div class="section"><h2>Recent Netlogon Events (last 24h)</h2>')
+    if ($Evts -is [System.Array] -and $Evts.Count -gt 0) {
+        $null = $Sb.AppendLine("<table><tr><th>Time</th><th>EventID</th><th>Level</th><th>Summary</th></tr>")
+        foreach ($E in $Evts | Select-Object -First 20) {
+            $null = $Sb.AppendLine("<tr><td>$([System.Net.WebUtility]::HtmlEncode($E.TimeCreated.ToString()))</td><td>$($E.EventId)</td><td>$([System.Net.WebUtility]::HtmlEncode($E.Level))</td><td>$([System.Net.WebUtility]::HtmlEncode($E.Summary))</td></tr>")
+        }
+        $null = $Sb.AppendLine("</table>")
+    }
+    else {
+        $null = $Sb.AppendLine("<p>No Netlogon events found in the last 24 hours.</p>")
+    }
+    $null = $Sb.AppendLine('</div>')
+
+    $null = $Sb.AppendLine("</body></html>")
+    $Sb.ToString()
+}
+
+#endregion

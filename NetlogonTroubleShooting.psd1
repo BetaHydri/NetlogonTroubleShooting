@@ -1,6 +1,6 @@
 @{
     RootModule        = 'NetlogonTroubleShooting.psm1'
-    ModuleVersion     = '1.1.0'
+    ModuleVersion     = '1.2.0'
     GUID              = 'a3f7b2c1-4d5e-6f78-9a0b-c1d2e3f4a5b6'
     Author            = 'Jan Tiedemann'
     CompanyName       = 'Microsoft'
@@ -15,7 +15,13 @@
         'Get-NetlogonDebugStatus',
         'Read-NetlogonDebugLog',
         'Get-NetlogonStatus',
-        'Test-NetlogonSecureChannel'
+        'Test-NetlogonSecureChannel',
+        'Test-DCPortConnectivity',
+        'Test-NetlogonDnsRecords',
+        'Test-TimeSynchronization',
+        'Get-DCLocatorInfo',
+        'Get-ADSiteInfo',
+        'Invoke-NetlogonDiagnostic'
     )
 
     CmdletsToExport   = @()

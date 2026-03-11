@@ -13,9 +13,9 @@ Describe 'Module: NetlogonTroubleShooting' {
             { Import-Module (Join-Path $PSScriptRoot '..' 'NetlogonTroubleShooting.psd1') -Force } | Should -Not -Throw
         }
 
-        It 'Should export exactly 7 functions' {
+        It 'Should export exactly 13 functions' {
             $Module = Get-Module NetlogonTroubleShooting
-            $Module.ExportedFunctions.Count | Should -Be 7
+            $Module.ExportedFunctions.Count | Should -Be 13
         }
 
         It 'Should export Get-NetlogonEvent' {
@@ -45,6 +45,30 @@ Describe 'Module: NetlogonTroubleShooting' {
         It 'Should export Test-NetlogonSecureChannel' {
             Get-Command -Module NetlogonTroubleShooting -Name 'Test-NetlogonSecureChannel' | Should -Not -BeNullOrEmpty
         }
+
+        It 'Should export Test-DCPortConnectivity' {
+            Get-Command -Module NetlogonTroubleShooting -Name 'Test-DCPortConnectivity' | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should export Test-NetlogonDnsRecords' {
+            Get-Command -Module NetlogonTroubleShooting -Name 'Test-NetlogonDnsRecords' | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should export Test-TimeSynchronization' {
+            Get-Command -Module NetlogonTroubleShooting -Name 'Test-TimeSynchronization' | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should export Get-DCLocatorInfo' {
+            Get-Command -Module NetlogonTroubleShooting -Name 'Get-DCLocatorInfo' | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should export Get-ADSiteInfo' {
+            Get-Command -Module NetlogonTroubleShooting -Name 'Get-ADSiteInfo' | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should export Invoke-NetlogonDiagnostic' {
+            Get-Command -Module NetlogonTroubleShooting -Name 'Invoke-NetlogonDiagnostic' | Should -Not -BeNullOrEmpty
+        }
     }
 
     Context 'Module Manifest' {
@@ -65,8 +89,8 @@ Describe 'Module: NetlogonTroubleShooting' {
             $Manifest.CompanyName | Should -Be 'Microsoft'
         }
 
-        It 'Should have version 1.1.0' {
-            $Manifest.Version.ToString() | Should -Be '1.1.0'
+        It 'Should have version 1.2.0' {
+            $Manifest.Version.ToString() | Should -Be '1.2.0'
         }
 
         It 'Should require PowerShell 5.1' {
@@ -688,6 +712,513 @@ Describe 'Test-NetlogonSecureChannel' {
         It 'Should not attempt repair on single-DC scenario' {
             $Result = Test-NetlogonSecureChannel
             $Result.RepairAttempted | Should -Be $false
+        }
+    }
+}
+
+Describe 'Test-DCPortConnectivity' {
+
+    Context 'Parameter validation' {
+
+        It 'Should have a DomainController parameter' {
+            (Get-Command Test-DCPortConnectivity).Parameters.Keys | Should -Contain 'DomainController'
+        }
+
+        It 'Should have a Port parameter' {
+            (Get-Command Test-DCPortConnectivity).Parameters.Keys | Should -Contain 'Port'
+        }
+
+        It 'Should have a TimeoutMs parameter' {
+            (Get-Command Test-DCPortConnectivity).Parameters.Keys | Should -Contain 'TimeoutMs'
+        }
+
+        It 'Should have a ComputerName parameter' {
+            (Get-Command Test-DCPortConnectivity).Parameters.Keys | Should -Contain 'ComputerName'
+        }
+    }
+
+    Context 'When testing reachable ports' {
+
+        BeforeAll {
+            # Use localhost as a mock target — port 135 (RPC) is typically open on Windows
+            $Script:Results = Test-DCPortConnectivity -DomainController 'localhost' -Port 135 -TimeoutMs 1000
+        }
+
+        It 'Should return a result object' {
+            $Script:Results | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should include DomainController property' {
+            $Script:Results[0].DomainController | Should -Be 'localhost'
+        }
+
+        It 'Should include Port property' {
+            $Script:Results[0].Port | Should -Be 135
+        }
+
+        It 'Should include Service property' {
+            $Script:Results[0].Service | Should -Be 'RPC Endpoint Mapper'
+        }
+
+        It 'Should include Reachable property as boolean' {
+            $Script:Results[0].Reachable | Should -BeOfType [bool]
+        }
+    }
+
+    Context 'When testing unreachable ports' {
+
+        BeforeAll {
+            # Port 19999 should not be open anywhere
+            $Script:Results = Test-DCPortConnectivity -DomainController '192.0.2.1' -Port 19999 -TimeoutMs 500
+        }
+
+        It 'Should return Reachable as False for an unreachable host' {
+            $Script:Results[0].Reachable | Should -Be $false
+        }
+    }
+
+    Context 'When testing multiple ports' {
+
+        BeforeAll {
+            $Script:Results = Test-DCPortConnectivity -DomainController 'localhost' -Port 135, 445 -TimeoutMs 1000
+        }
+
+        It 'Should return one result per port' {
+            $Script:Results.Count | Should -Be 2
+        }
+    }
+}
+
+Describe 'Test-NetlogonDnsRecords' {
+
+    Context 'Parameter validation' {
+
+        It 'Should have a DomainName parameter' {
+            (Get-Command Test-NetlogonDnsRecords).Parameters.Keys | Should -Contain 'DomainName'
+        }
+
+        It 'Should have a SiteName parameter' {
+            (Get-Command Test-NetlogonDnsRecords).Parameters.Keys | Should -Contain 'SiteName'
+        }
+
+        It 'Should have a DnsServer parameter' {
+            (Get-Command Test-NetlogonDnsRecords).Parameters.Keys | Should -Contain 'DnsServer'
+        }
+    }
+
+    Context 'When resolving DNS records' {
+
+        BeforeAll {
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Resolve-DnsName {
+                [PSCustomObject]@{
+                    QueryType  = 'SRV'
+                    NameTarget = 'DC01.contoso.com'
+                    Port       = 389
+                }
+            }
+        }
+
+        It 'Should return DNS record results' {
+            $Results = Test-NetlogonDnsRecords -DomainName 'contoso.com'
+            $Results | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should check multiple record types' {
+            $Results = Test-NetlogonDnsRecords -DomainName 'contoso.com'
+            $Results.Count | Should -BeGreaterOrEqual 7
+        }
+
+        It 'Should include RecordName, RecordType, and Purpose' {
+            $Results = Test-NetlogonDnsRecords -DomainName 'contoso.com'
+            $First = $Results[0]
+            $First.PSObject.Properties.Name | Should -Contain 'RecordName'
+            $First.PSObject.Properties.Name | Should -Contain 'RecordType'
+            $First.PSObject.Properties.Name | Should -Contain 'Purpose'
+            $First.PSObject.Properties.Name | Should -Contain 'Resolved'
+        }
+
+        It 'Should show Resolved as True when DNS resolves' {
+            $Results = Test-NetlogonDnsRecords -DomainName 'contoso.com'
+            $Results[0].Resolved | Should -Be $true
+        }
+
+        It 'Should include site-specific records when SiteName is given' {
+            $Results = Test-NetlogonDnsRecords -DomainName 'contoso.com' -SiteName 'NYC'
+            $SiteRecords = $Results | Where-Object { $_.Purpose -match 'NYC' }
+            $SiteRecords.Count | Should -BeGreaterOrEqual 1
+        }
+    }
+
+    Context 'When DNS records do not resolve' {
+
+        BeforeAll {
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Resolve-DnsName {
+                throw [System.Exception]::new('DNS name does not exist')
+            }
+        }
+
+        It 'Should show Resolved as False' {
+            $Results = Test-NetlogonDnsRecords -DomainName 'nonexistent.invalid'
+            $Results[0].Resolved | Should -Be $false
+        }
+
+        It 'Should include the error message' {
+            $Results = Test-NetlogonDnsRecords -DomainName 'nonexistent.invalid'
+            $Results[0].Error | Should -Not -BeNullOrEmpty
+        }
+    }
+}
+
+Describe 'Test-TimeSynchronization' {
+
+    Context 'Parameter validation' {
+
+        It 'Should have a ComputerName parameter' {
+            (Get-Command Test-TimeSynchronization).Parameters.Keys | Should -Contain 'ComputerName'
+        }
+
+        It 'Should have a DomainController parameter' {
+            (Get-Command Test-TimeSynchronization).Parameters.Keys | Should -Contain 'DomainController'
+        }
+
+        It 'Should have a MaxSkewSeconds parameter' {
+            (Get-Command Test-TimeSynchronization).Parameters.Keys | Should -Contain 'MaxSkewSeconds'
+        }
+    }
+
+    Context 'When time sync can be checked locally' {
+
+        BeforeAll {
+            Mock -ModuleName NetlogonTroubleShooting -CommandName w32tm {
+                'Leap Indicator: 0(no warning)', 'Source: DC01.contoso.com', 'Stratum: 3'
+            }
+            Mock -ModuleName NetlogonTroubleShooting -CommandName nltest {
+                'DC: \\DC01.contoso.com', 'Address: \\10.0.0.10'
+            }
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Invoke-Command {
+                Get-Date
+            }
+        }
+
+        It 'Should return a time sync result' {
+            $Result = Test-TimeSynchronization
+            $Result | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should include ComputerName property' {
+            $Result = Test-TimeSynchronization
+            $Result.ComputerName | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should include ThresholdSeconds property' {
+            $Result = Test-TimeSynchronization
+            $Result.ThresholdSeconds | Should -Be 300
+        }
+
+        It 'Should include TimeSource property' {
+            $Result = Test-TimeSynchronization
+            $Result.PSObject.Properties.Name | Should -Contain 'TimeSource'
+        }
+    }
+}
+
+Describe 'Get-DCLocatorInfo' {
+
+    Context 'Parameter validation' {
+
+        It 'Should have a DomainName parameter' {
+            (Get-Command Get-DCLocatorInfo).Parameters.Keys | Should -Contain 'DomainName'
+        }
+
+        It 'Should have a SiteName parameter' {
+            (Get-Command Get-DCLocatorInfo).Parameters.Keys | Should -Contain 'SiteName'
+        }
+
+        It 'Should have a ForceRediscovery switch' {
+            (Get-Command Get-DCLocatorInfo).Parameters['ForceRediscovery'].SwitchParameter | Should -Be $true
+        }
+
+        It 'Should have a PDC switch' {
+            (Get-Command Get-DCLocatorInfo).Parameters['PDC'].SwitchParameter | Should -Be $true
+        }
+
+        It 'Should have a KDC switch' {
+            (Get-Command Get-DCLocatorInfo).Parameters['KDC'].SwitchParameter | Should -Be $true
+        }
+
+        It 'Should have a TimeServer switch' {
+            (Get-Command Get-DCLocatorInfo).Parameters['TimeServer'].SwitchParameter | Should -Be $true
+        }
+
+        It 'Should have a WritableRequired switch' {
+            (Get-Command Get-DCLocatorInfo).Parameters['WritableRequired'].SwitchParameter | Should -Be $true
+        }
+    }
+
+    Context 'When DC locator succeeds' {
+
+        BeforeAll {
+            Mock -ModuleName NetlogonTroubleShooting -CommandName nltest {
+                @(
+                    '           DC: \\DC01.contoso.com'
+                    '      Address: \\10.0.0.10'
+                    '     Dom Guid: a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+                    '     Dom Name: contoso.com'
+                    '  Forest Name: contoso.com'
+                    ' DC Site Name: NYC'
+                    'Our Site Name: NYC'
+                    '        Flags: PDC GC DS LDAP KDC TIMESERV WRITABLE DNS_DC DNS_DOMAIN'
+                    'The command completed successfully'
+                )
+            }
+        }
+
+        It 'Should return a DC locator result' {
+            $Result = Get-DCLocatorInfo -DomainName 'contoso.com'
+            $Result | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should parse DCName' {
+            $Result = Get-DCLocatorInfo -DomainName 'contoso.com'
+            $Result.DCName | Should -Be 'DC01.contoso.com'
+        }
+
+        It 'Should parse DCAddress' {
+            $Result = Get-DCLocatorInfo -DomainName 'contoso.com'
+            $Result.DCAddress | Should -Be '10.0.0.10'
+        }
+
+        It 'Should parse DCSiteName' {
+            $Result = Get-DCLocatorInfo -DomainName 'contoso.com'
+            $Result.DCSiteName | Should -Be 'NYC'
+        }
+
+        It 'Should parse ClientSiteName' {
+            $Result = Get-DCLocatorInfo -DomainName 'contoso.com'
+            $Result.ClientSiteName | Should -Be 'NYC'
+        }
+
+        It 'Should parse Flags' {
+            $Result = Get-DCLocatorInfo -DomainName 'contoso.com'
+            $Result.Flags | Should -Match 'PDC'
+        }
+
+        It 'Should report Success as True' {
+            $Result = Get-DCLocatorInfo -DomainName 'contoso.com'
+            $Result.Success | Should -Be $true
+        }
+
+        It 'Should include RawOutput' {
+            $Result = Get-DCLocatorInfo -DomainName 'contoso.com'
+            $Result.RawOutput | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    Context 'When DC locator fails' {
+
+        BeforeAll {
+            Mock -ModuleName NetlogonTroubleShooting -CommandName nltest {
+                'Getting DC name failed: Status = 1355 0x54b ERROR_NO_SUCH_DOMAIN'
+            }
+        }
+
+        It 'Should report Success as False' {
+            $Result = Get-DCLocatorInfo -DomainName 'nonexistent.invalid'
+            $Result.Success | Should -Be $false
+        }
+    }
+}
+
+Describe 'Get-ADSiteInfo' {
+
+    Context 'Parameter validation' {
+
+        It 'Should have a ComputerName parameter' {
+            (Get-Command Get-ADSiteInfo).Parameters.Keys | Should -Contain 'ComputerName'
+        }
+
+        It 'Should have a SiteName parameter' {
+            (Get-Command Get-ADSiteInfo).Parameters.Keys | Should -Contain 'SiteName'
+        }
+    }
+
+    Context 'When site info is available' {
+
+        BeforeAll {
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Get-NetIPAddress {
+                [PSCustomObject]@{
+                    IPAddress     = '10.1.20.50'
+                    AddressFamily = 'IPv4'
+                    Type          = 'Unicast'
+                }
+            }
+            Mock -ModuleName NetlogonTroubleShooting -CommandName nltest {
+                @('NYC', 'The command completed successfully')
+            }
+        }
+
+        It 'Should return a site info result' {
+            $Result = Get-ADSiteInfo -SiteName 'NYC'
+            $Result | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should include AssignedSite property' {
+            $Result = Get-ADSiteInfo -SiteName 'NYC'
+            $Result.AssignedSite | Should -Be 'NYC'
+        }
+
+        It 'Should include ClientIP property' {
+            $Result = Get-ADSiteInfo -SiteName 'NYC'
+            $Result.ClientIP | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should include expected properties' {
+            $Result = Get-ADSiteInfo -SiteName 'NYC'
+            $Props = $Result.PSObject.Properties.Name
+            $Props | Should -Contain 'ComputerName'
+            $Props | Should -Contain 'AssignedSite'
+            $Props | Should -Contain 'NoClientSite'
+            $Props | Should -Contain 'Subnets'
+            $Props | Should -Contain 'DCs'
+            $Props | Should -Contain 'SubnetCount'
+            $Props | Should -Contain 'DCCount'
+            $Props | Should -Contain 'SiteLinks'
+        }
+    }
+}
+
+Describe 'Invoke-NetlogonDiagnostic' {
+
+    Context 'Parameter validation' {
+
+        It 'Should have a ComputerName parameter' {
+            (Get-Command Invoke-NetlogonDiagnostic).Parameters.Keys | Should -Contain 'ComputerName'
+        }
+
+        It 'Should have an OutputFormat parameter' {
+            (Get-Command Invoke-NetlogonDiagnostic).Parameters.Keys | Should -Contain 'OutputFormat'
+        }
+
+        It 'Should have an OutputPath parameter' {
+            (Get-Command Invoke-NetlogonDiagnostic).Parameters.Keys | Should -Contain 'OutputPath'
+        }
+
+        It 'Should only accept Text or HTML for OutputFormat' {
+            $ValidValues = (Get-Command Invoke-NetlogonDiagnostic).Parameters['OutputFormat'].Attributes |
+                           Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] } |
+                           Select-Object -ExpandProperty ValidValues
+            $ValidValues | Should -Contain 'Text'
+            $ValidValues | Should -Contain 'HTML'
+        }
+    }
+
+    Context 'When running a full diagnostic' {
+
+        BeforeAll {
+            # Mock all sub-functions to avoid real network/AD calls
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Get-NetlogonStatus {
+                [PSCustomObject]@{
+                    ServiceStatus       = 'Running'
+                    ServiceStartType    = 'Automatic'
+                    DomainName          = 'contoso.com'
+                    AuthenticatingDC    = 'DC01.contoso.com'
+                    SecureChannelHealthy = $true
+                    DebugLoggingEnabled = $false
+                    DebugLevel          = 'Disabled'
+                }
+            }
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Test-NetlogonSecureChannel {
+                [PSCustomObject]@{
+                    SecureChannelOK = $true
+                    DCName          = 'DC01.contoso.com'
+                    Recommendations = @()
+                }
+            }
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Get-DCLocatorInfo {
+                [PSCustomObject]@{
+                    DCName         = 'DC01.contoso.com'
+                    DCAddress      = '10.0.0.10'
+                    DCSiteName     = 'NYC'
+                    ClientSiteName = 'NYC'
+                    Flags          = 'PDC GC DS LDAP KDC'
+                    Success        = $true
+                }
+            }
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Get-ADSiteInfo {
+                [PSCustomObject]@{
+                    AssignedSite = 'NYC'
+                    ClientIP     = '10.1.20.50'
+                    NoClientSite = $false
+                    Subnets      = '10.1.20.0/24'
+                    SubnetCount  = 1
+                    DCs          = 'DC01.contoso.com'
+                    DCCount      = 1
+                    SiteLinks    = 'NYC-London'
+                }
+            }
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Test-NetlogonDnsRecords {
+                @(
+                    [PSCustomObject]@{ RecordName = '_ldap._tcp.dc._msdcs.contoso.com'; Resolved = $true; Purpose = 'DC Locator'; Targets = 'DC01:389'; Error = $null }
+                )
+            }
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Test-DCPortConnectivity {
+                @(
+                    [PSCustomObject]@{ DomainController = 'DC01.contoso.com'; Port = 389; Service = 'LDAP'; Reachable = $true }
+                )
+            }
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Test-TimeSynchronization {
+                [PSCustomObject]@{
+                    DomainController = 'DC01.contoso.com'
+                    SkewSeconds      = 0.5
+                    WithinThreshold  = $true
+                    TimeSource       = 'DC01.contoso.com'
+                    ComputerName     = $env:COMPUTERNAME
+                }
+            }
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Get-NetlogonEvent { @() }
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Get-NetlogonDebugStatus {
+                [PSCustomObject]@{ DebugEnabled = $false; Level = 'Disabled' }
+            }
+        }
+
+        It 'Should return a diagnostic report object' {
+            $Result = Invoke-NetlogonDiagnostic
+            $Result | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should include Results hashtable with all check keys' {
+            $Result = Invoke-NetlogonDiagnostic
+            $Result.Results.Keys | Should -Contain 'NetlogonStatus'
+            $Result.Results.Keys | Should -Contain 'SecureChannel'
+            $Result.Results.Keys | Should -Contain 'DCLocator'
+            $Result.Results.Keys | Should -Contain 'SiteInfo'
+            $Result.Results.Keys | Should -Contain 'DnsRecords'
+            $Result.Results.Keys | Should -Contain 'PortConnectivity'
+            $Result.Results.Keys | Should -Contain 'TimeSync'
+            $Result.Results.Keys | Should -Contain 'Events'
+        }
+
+        It 'Should include ComputerName and Timestamp' {
+            $Result = Invoke-NetlogonDiagnostic
+            $Result.ComputerName | Should -Not -BeNullOrEmpty
+            $Result.Timestamp | Should -BeOfType [datetime]
+        }
+
+        It 'Should generate HTML when OutputFormat is HTML' {
+            $TempFile = Join-Path $TestDrive 'diag.html'
+            $Result = Invoke-NetlogonDiagnostic -OutputFormat HTML -OutputPath $TempFile
+            Test-Path $TempFile | Should -Be $true
+            $Content = Get-Content $TempFile -Raw
+            $Content | Should -Match '<!DOCTYPE html>'
+            $Content | Should -Match 'Netlogon Diagnostic'
+        }
+
+        It 'Should generate text when OutputFormat is Text' {
+            $TempFile = Join-Path $TestDrive 'diag.txt'
+            $Result = Invoke-NetlogonDiagnostic -OutputFormat Text -OutputPath $TempFile
+            Test-Path $TempFile | Should -Be $true
+            $Content = Get-Content $TempFile -Raw
+            $Content | Should -Match 'NETLOGON DIAGNOSTIC REPORT'
         }
     }
 }

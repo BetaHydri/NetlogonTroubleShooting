@@ -4,7 +4,7 @@
 ![PowerShell 7.x](https://img.shields.io/badge/PowerShell-7.x-blue?logo=powershell&logoColor=white)
 ![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
-![Version: 1.1.0](https://img.shields.io/badge/Version-1.1.0-brightgreen)
+![Version: 1.2.0](https://img.shields.io/badge/Version-1.2.0-brightgreen)
 ![Pester Tests](https://img.shields.io/badge/Pester-Passing-success?logo=dotnet)
 ![Active Directory](https://img.shields.io/badge/Active%20Directory-Netlogon-orange)
 
@@ -18,7 +18,13 @@ A PowerShell module for diagnosing and troubleshooting **Netlogon** issues in Ac
 - **Debug Log Management** — Enable/disable Netlogon debug logging via registry with configurable verbosity levels.
 - **Debug Log Reader** — Parse `netlogon.log` into structured objects, filter by category (Authentication, DC Discovery, DNS, Secure Channel), and surface errors.
 - **Secure Channel Testing** — Test and repair the Netlogon secure channel with detailed diagnostic output.
-- **Remote Support** — All commands accept `-ComputerName` for remote execution via PowerShell Remoting.
+- **DC Port Connectivity** — Test all required AD/Netlogon ports (53, 88, 135, 389, 445, 464, 636, 3268, 3269) against discovered DCs.
+- **DNS Record Validation** — Verify critical SRV and A records (`_ldap._tcp.dc._msdcs`, `_kerberos._tcp`, `_gc._tcp`, site-specific) are resolvable.
+- **Time Synchronization** — Check time skew between a computer and its authenticating DC (Kerberos 5-minute tolerance).
+- **DC Locator Diagnostics** — Parsed `nltest /dsgetdc` output with flags for force rediscovery, site, PDC, KDC, time server, and writable DC.
+- **AD Site Information** — Show site assignment, subnet mapping, and DCs in the site. Detect `NO_CLIENT_SITE` conditions.
+- **Comprehensive Diagnostic Report** — One-shot `Invoke-NetlogonDiagnostic` combining all checks into a text or HTML report.
+- **Remote Support** — All commands accept `-ComputerName` for remote execution via PowerShell Remoting (WinRM).
 
 ---
 
@@ -56,6 +62,12 @@ Import-Module NetlogonTroubleShooting
 | `Read-NetlogonDebugLog` | Parses netlogon.log into structured, filterable objects |
 | `Get-NetlogonStatus` | Gets comprehensive Netlogon service and secure channel status |
 | `Test-NetlogonSecureChannel` | Tests and optionally repairs the secure channel |
+| `Test-DCPortConnectivity` | Tests all required AD/Netlogon TCP ports against DCs |
+| `Test-NetlogonDnsRecords` | Validates critical AD DNS SRV and A records |
+| `Test-TimeSynchronization` | Checks time skew between a computer and its authenticating DC |
+| `Get-DCLocatorInfo` | Parsed DC locator output with force rediscovery, site, PDC, KDC flags |
+| `Get-ADSiteInfo` | Shows AD site assignment, subnets, and DCs in the site |
+| `Invoke-NetlogonDiagnostic` | Runs all checks and produces a consolidated text or HTML report |
 
 ---
 
@@ -323,6 +335,270 @@ Recommendations:
   - Check AD replication: repadmin /replsummary
   - Verify the computer account is not disabled in AD
   - Check time synchronization (w32tm /query /status)
+```
+
+---
+
+### Test-DCPortConnectivity
+
+Test TCP connectivity to domain controllers on all required AD/Netlogon ports.
+
+```powershell
+# Test all ports to all discovered DCs
+Test-DCPortConnectivity
+
+# Test specific ports on a specific DC
+Test-DCPortConnectivity -DomainController 'DC01.contoso.com' -Port 389,636
+
+# Test from a remote machine
+Test-DCPortConnectivity -ComputerName 'Server01'
+```
+
+**Sample Output:**
+
+```
+SourceComputer   DomainController   Port  Service               Reachable
+--------------   ----------------   ----  -------               ---------
+SERVER01         DC01.contoso.com     53  DNS                        True
+SERVER01         DC01.contoso.com     88  Kerberos                   True
+SERVER01         DC01.contoso.com    135  RPC Endpoint Mapper        True
+SERVER01         DC01.contoso.com    389  LDAP                       True
+SERVER01         DC01.contoso.com    445  SMB                        True
+SERVER01         DC01.contoso.com    464  Kerberos Password          True
+SERVER01         DC01.contoso.com    636  LDAPS                      True
+SERVER01         DC01.contoso.com   3268  Global Catalog             True
+SERVER01         DC01.contoso.com   3269  Global Catalog SSL         True
+```
+
+---
+
+### Test-NetlogonDnsRecords
+
+Verify that all critical DNS SRV and A records required by the DC locator are resolvable.
+
+```powershell
+# Check DNS for current domain and site
+Test-NetlogonDnsRecords
+
+# Check a specific domain and site
+Test-NetlogonDnsRecords -DomainName 'contoso.com' -SiteName 'NYC'
+
+# Use a specific DNS server
+Test-NetlogonDnsRecords -DnsServer '10.0.0.10'
+```
+
+**Sample Output:**
+
+```
+RecordName                                          RecordType Purpose                   Resolved ResultCount Targets
+----------                                          ---------- -------                   -------- ----------- -------
+_ldap._tcp.dc._msdcs.contoso.com                    SRV        DC Locator (LDAP)             True           2 DC01...:389; DC02...:389
+_kerberos._tcp.dc._msdcs.contoso.com                SRV        DC Locator (Kerberos)         True           2 DC01...:88; DC02...:88
+_ldap._tcp.contoso.com                              SRV        LDAP Service                  True           2 DC01...:389; DC02...:389
+_kerberos._tcp.contoso.com                          SRV        Kerberos Service              True           2 DC01...:88; DC02...:88
+_gc._tcp.contoso.com                                SRV        Global Catalog                True           1 DC01...:3268
+_ldap._tcp.pdc._msdcs.contoso.com                   SRV        PDC Locator                   True           1 DC01...:389
+contoso.com                                         A          Domain A Record               True           2 10.0.0.10; 10.0.0.11
+_ldap._tcp.NYC._sites.dc._msdcs.contoso.com         SRV        Site DC Locator (NYC)          True           1 DC01...:389
+```
+
+---
+
+### Test-TimeSynchronization
+
+Check time skew between a computer and its authenticating DC. Kerberos fails at >5 minutes drift.
+
+```powershell
+# Check local machine
+Test-TimeSynchronization
+
+# Check with custom threshold (2 minutes)
+Test-TimeSynchronization -MaxSkewSeconds 120
+
+# Check specific DC
+Test-TimeSynchronization -DomainController 'DC01.contoso.com'
+```
+
+**Sample Output:**
+
+```
+ComputerName     : SERVER01
+DomainController : DC01.contoso.com
+LocalTime        : 03/11/2026 10:30:15
+DCTime           : 03/11/2026 10:30:14
+SkewSeconds      : 0.87
+WithinThreshold  : True
+ThresholdSeconds : 300
+TimeSource       : DC01.contoso.com
+W32TimeStatus    : Leap Indicator: 0(no warning)...
+
+Time synchronization on SERVER01: OK (skew: 0.9s).
+```
+
+---
+
+### Get-DCLocatorInfo
+
+Retrieve parsed DC locator results via `nltest /dsgetdc` with flags for force rediscovery, site, PDC, KDC, or time server.
+
+```powershell
+# Default DC discovery
+Get-DCLocatorInfo
+
+# Force rediscovery for a specific site
+Get-DCLocatorInfo -ForceRediscovery -SiteName 'NYC'
+
+# Find the PDC emulator
+Get-DCLocatorInfo -PDC
+
+# Find a KDC
+Get-DCLocatorInfo -KDC
+
+# Find a writable DC (not an RODC)
+Get-DCLocatorInfo -WritableRequired
+```
+
+**Sample Output:**
+
+```
+ComputerName     : SERVER01
+DomainName       : contoso.com
+DCName           : DC01.contoso.com
+DCAddress        : 10.0.0.10
+DCSiteName       : NYC
+ClientSiteName   : NYC
+DomainGuid       : a1b2c3d4-e5f6-7890-abcd-ef1234567890
+Flags            : PDC GC DS LDAP KDC TIMESERV GTIMESERV WRITABLE DNS_DC DNS_DOMAIN FULL_SECRET
+ForceRediscovery : False
+RequestedSite    :
+Success          : True
+
+DC located: DC01.contoso.com (10.0.0.10) in site NYC.
+```
+
+---
+
+### Get-ADSiteInfo
+
+Show which AD site the computer is assigned to, its subnet mapping, and the DCs in the site. Detect `NO_CLIENT_SITE` conditions.
+
+```powershell
+# Local machine site info
+Get-ADSiteInfo
+
+# Query a specific site
+Get-ADSiteInfo -SiteName 'London'
+
+# Multiple computers
+Get-ADSiteInfo -ComputerName 'Server01','Server02'
+```
+
+**Sample Output:**
+
+```
+ComputerName : SERVER01
+ClientIP     : 10.1.20.50
+AssignedSite : NYC
+NltestSite   : NYC
+NoClientSite : False
+Subnets      : 10.1.20.0/24; 10.1.21.0/24
+SubnetCount  : 2
+DCs          : DC01.contoso.com; DC02.contoso.com
+DCCount      : 2
+SiteLinks    : NYC-London; NYC-Chicago
+
+SERVER01: Site 'NYC' (2 DCs, 2 subnets).
+```
+
+**Sample Output (NO_CLIENT_SITE):**
+
+```
+ComputerName : SERVER03
+ClientIP     : 10.1.50.22
+AssignedSite : NO_CLIENT_SITE
+NoClientSite : True
+
+SERVER03: NO_CLIENT_SITE detected! The computer IP (10.1.50.22) does not match any AD subnet.
+  Create a subnet in AD Sites and Services covering this IP range.
+```
+
+---
+
+### Invoke-NetlogonDiagnostic
+
+Run **all** checks in a single command and produce a consolidated report. Ideal for one-shot diagnostics that can be saved, emailed, or attached to a ticket.
+
+```powershell
+# Text report to console
+Invoke-NetlogonDiagnostic
+
+# HTML report saved to file
+Invoke-NetlogonDiagnostic -OutputFormat HTML -OutputPath 'C:\Reports\netlogon_diag.html'
+
+# Diagnose a remote server
+Invoke-NetlogonDiagnostic -ComputerName 'Server01'
+
+# Save text report to file
+Invoke-NetlogonDiagnostic -OutputFormat Text -OutputPath 'C:\Reports\netlogon_diag.txt'
+```
+
+**The report includes all of the following checks:**
+
+| # | Check | Description |
+|---|---|---|
+| 1 | Netlogon Service Status | Service state, domain, authenticating DC, debug logging |
+| 2 | Secure Channel Health | Secure channel OK/broken, DC name, recommendations |
+| 3 | DC Locator | Discovered DC, address, site, flags |
+| 4 | AD Site Information | Assigned site, subnets, DCs in site, NO_CLIENT_SITE detection |
+| 5 | DNS Record Validation | All critical SRV/A records with pass/fail |
+| 6 | DC Port Connectivity | All AD ports tested per DC with open/blocked |
+| 7 | Time Synchronization | Time skew, time source, threshold check |
+| 8 | Recent Netlogon Events | Last 24h of Netlogon events from the event log |
+
+**Sample Text Report (excerpt):**
+
+```
+========================================================================
+  NETLOGON DIAGNOSTIC REPORT
+  Computer : SERVER01
+  Generated: 03/11/2026 10:45:00
+========================================================================
+
+--- Netlogon Service Status ---
+  Service         : Running
+  Domain          : contoso.com
+  Auth DC         : DC01.contoso.com
+  Secure Channel  : Healthy
+  Debug Logging   : Disabled
+
+--- DC Locator ---
+  DC Name     : DC01.contoso.com
+  DC Address  : 10.0.0.10
+  DC Site     : NYC
+  Client Site : NYC
+  Flags       : PDC GC DS LDAP KDC TIMESERV WRITABLE DNS_DC
+
+--- DNS Record Validation ---
+  [OK]   DC Locator (LDAP): _ldap._tcp.dc._msdcs.contoso.com
+  [OK]   Kerberos Service: _kerberos._tcp.contoso.com
+  [FAIL] Site DC Locator (NYC): _ldap._tcp.NYC._sites.dc._msdcs.contoso.com
+         Error: DNS name does not exist
+
+--- DC Port Connectivity ---
+  DC: DC01.contoso.com
+    [OK]   Port 53 (DNS)
+    [OK]   Port 88 (Kerberos)
+    [OK]   Port 389 (LDAP)
+    [FAIL] Port 3269 (Global Catalog SSL)
+
+--- Time Synchronization ---
+  DC             : DC01.contoso.com
+  Skew           : 0.87s
+  Within Limit   : Yes
+  Time Source    : DC01.contoso.com
+========================================================================
+  End of Netlogon Diagnostic Report
+========================================================================
 ```
 
 ---

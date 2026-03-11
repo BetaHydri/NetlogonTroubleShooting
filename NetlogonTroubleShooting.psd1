@@ -1,6 +1,6 @@
 @{
     RootModule        = 'NetlogonTroubleShooting.psm1'
-    ModuleVersion     = '1.0.0'
+    ModuleVersion     = '1.1.0'
     GUID              = 'a3f7b2c1-4d5e-6f78-9a0b-c1d2e3f4a5b6'
     Author            = 'Jan Tiedemann'
     CompanyName       = 'Microsoft'

@@ -65,8 +65,8 @@ Describe 'Module: NetlogonTroubleShooting' {
             $Manifest.CompanyName | Should -Be 'Microsoft'
         }
 
-        It 'Should have version 1.0.0' {
-            $Manifest.Version.ToString() | Should -Be '1.0.0'
+        It 'Should have version 1.1.0' {
+            $Manifest.Version.ToString() | Should -Be '1.1.0'
         }
 
         It 'Should require PowerShell 5.1' {

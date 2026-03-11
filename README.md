@@ -1,9 +1,10 @@
 # NetlogonTroubleShooting
 
-![PowerShell 5.1+](https://img.shields.io/badge/PowerShell-5.1%2B-blue?logo=powershell&logoColor=white)
+![PowerShell 5.1](https://img.shields.io/badge/PowerShell-5.1-blue?logo=powershell&logoColor=white)
+![PowerShell 7.x](https://img.shields.io/badge/PowerShell-7.x-blue?logo=powershell&logoColor=white)
 ![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
-![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.0-brightgreen)
+![Version: 1.1.0](https://img.shields.io/badge/Version-1.1.0-brightgreen)
 ![Pester Tests](https://img.shields.io/badge/Pester-Passing-success?logo=dotnet)
 ![Active Directory](https://img.shields.io/badge/Active%20Directory-Netlogon-orange)
 
@@ -104,13 +105,14 @@ ProviderName : NETLOGON
 ### Enable-NetlogonDebug / Disable-NetlogonDebug
 
 Manage Netlogon debug logging through the registry. Requires elevation.
+Changes are applied dynamically via `nltest /dbflag:` — no service restart required on modern Windows (Server 2012 R2+ / Windows 10+).
 
 ```powershell
-# Enable full debug logging (restarts Netlogon service)
+# Enable full debug logging
 Enable-NetlogonDebug
 
-# Enable standard level without restarting
-Enable-NetlogonDebug -Level Standard -NoRestart
+# Enable standard level
+Enable-NetlogonDebug -Level Standard
 
 # Enable on remote DCs
 Enable-NetlogonDebug -ComputerName 'DC01', 'DC02'
@@ -128,7 +130,7 @@ Level        : Full
 DBFlag       : 0x2080FFFF
 MaxLogSize   : 268435456
 LogPath      : \\SERVER01\admin$\debug\netlogon.log
-Restarted    : True
+Restarted    : False
 
 Netlogon debug logging ENABLED on SERVER01 (Level: Full).
 Log location: C:\Windows\debug\netlogon.log
@@ -141,7 +143,7 @@ ComputerName : SERVER01
 DebugEnabled : False
 Level        : Disabled
 DBFlag       : 0x0
-Restarted    : True
+Restarted    : False
 
 Netlogon debug logging DISABLED on SERVER01.
 ```

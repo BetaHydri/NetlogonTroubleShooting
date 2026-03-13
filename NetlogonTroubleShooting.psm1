@@ -1926,8 +1926,30 @@ function Get-ADSiteInfo {
                         }
                     }
                     catch {
-                        $NoClientSite = $true
-                        Write-Verbose "Could not determine site for $Computer : $_"
+                        Write-Verbose "GetComputerSite() failed for $Computer : $_. Trying nltest /dsgetsite fallback..."
+                        # Fallback: nltest /dsgetsite works via the local Netlogon service and doesn't require Kerberos delegation
+                        try {
+                            if ($IsLocal) {
+                                $FallbackSiteOutput = nltest /dsgetsite 2>&1 | Out-String
+                            }
+                            else {
+                                $FallbackSiteOutput = Invoke-Command -ComputerName $Computer -ScriptBlock {
+                                    nltest /dsgetsite 2>&1 | Out-String
+                                }
+                            }
+                            $FallbackSite = ($FallbackSiteOutput.Trim() -split "`n")[0].Trim()
+                            if ($FallbackSite -and $FallbackSite -notmatch 'ERROR|FAIL') {
+                                $AssignedSite = $FallbackSite
+                                Write-Verbose "Site determined via nltest fallback: $AssignedSite"
+                            }
+                            else {
+                                $NoClientSite = $true
+                            }
+                        }
+                        catch {
+                            $NoClientSite = $true
+                            Write-Verbose "nltest /dsgetsite fallback also failed: $_"
+                        }
                     }
                 }
 
@@ -1957,27 +1979,54 @@ function Get-ADSiteInfo {
 
                 if ($AssignedSite) {
                     try {
-                        $DirectoryContext = [System.DirectoryServices.ActiveDirectory.DirectoryContext]::new(
-                            [System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Forest
-                        )
-                        $Forest = [System.DirectoryServices.ActiveDirectory.Forest]::GetForest($DirectoryContext)
-                        $AllSites = $Forest.Sites
+                        $SiteDetailScript = {
+                            param($SiteToQuery)
+                            $DirectoryCtx = [System.DirectoryServices.ActiveDirectory.DirectoryContext]::new(
+                                [System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Forest
+                            )
+                            $ForestObj = [System.DirectoryServices.ActiveDirectory.Forest]::GetForest($DirectoryCtx)
+                            $AllSitesObj = $ForestObj.Sites
+                            $SiteObj = $AllSitesObj | Where-Object { $_.Name -eq $SiteToQuery }
+                            if ($SiteObj) {
+                                @{
+                                    Subnets   = @($SiteObj.Subnets | ForEach-Object { $_.Name })
+                                    DCs       = @($SiteObj.Servers | ForEach-Object { $_.Name })
+                                    SiteLinks = @($SiteObj.SiteLinks | ForEach-Object { $_.Name })
+                                }
+                            }
+                            else {
+                                @{ Subnets = @(); DCs = @(); SiteLinks = @() }
+                            }
+                        }
 
-                        $Site = $AllSites | Where-Object { $_.Name -eq $AssignedSite }
+                        if ($IsLocal) {
+                            $SiteDetails = & $SiteDetailScript -SiteToQuery $AssignedSite
+                        }
+                        else {
+                            $SiteDetails = Invoke-Command -ComputerName $Computer -ScriptBlock $SiteDetailScript -ArgumentList $AssignedSite
+                        }
 
-                        if ($Site) {
-                            $SiteSubnets = @($Site.Subnets | ForEach-Object { $_.Name })
-                            $SiteDCs = @($Site.Servers | ForEach-Object { $_.Name })
-                            $SiteLinks = @($Site.SiteLinks | ForEach-Object { $_.Name })
+                        if ($SiteDetails) {
+                            $SiteSubnets = @($SiteDetails.Subnets)
+                            $SiteDCs = @($SiteDetails.DCs)
+                            $SiteLinks = @($SiteDetails.SiteLinks)
                         }
                     }
                     catch {
                         Write-Verbose "Could not enumerate site details: $_"
 
-                        # Fallback: use nltest /dsgetsite and /dclist
+                        # Fallback: use nltest /dclist
                         try {
-                            $DomainName = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
-                            $DCListOutput = nltest /dclist:$DomainName 2>&1 | Out-String
+                            if ($IsLocal) {
+                                $DomainName = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
+                                $DCListOutput = nltest /dclist:$DomainName 2>&1 | Out-String
+                            }
+                            else {
+                                $DCListOutput = Invoke-Command -ComputerName $Computer -ScriptBlock {
+                                    $Dom = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
+                                    nltest /dclist:$Dom 2>&1 | Out-String
+                                }
+                            }
                             $SiteDCs = [regex]::Matches($DCListOutput, '\\\\(\S+)') |
                             ForEach-Object { $_.Groups[1].Value } |
                             Where-Object { $_ -and $_ -ne 'The' }

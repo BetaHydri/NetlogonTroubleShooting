@@ -2137,9 +2137,10 @@ function Get-ADSiteInfo {
                     Write-Host "  Create a subnet in AD Sites and Services covering the $ClientIP range." -ForegroundColor Yellow
                 }
                 elseif (-not $SubnetMapped) {
-                    Write-Host "$Computer : Site '$AssignedSite' — client IP $ClientIP does NOT match any of the site's subnets!" -ForegroundColor Red
+                    Write-Host "$Computer : Site '$AssignedSite' — client IP $ClientIP does NOT match any of the $($SiteSubnets.Count) defined subnet(s)!" -ForegroundColor Red
                     Write-Host "  Defined subnets: $($SiteSubnets -join ', ')" -ForegroundColor Yellow
-                    Write-Host "  The client IP is not covered. Create or update subnets in AD Sites and Services." -ForegroundColor Yellow
+                    Write-Host "  ACTION REQUIRED: Amend the subnet-to-site assignments in AD Sites and Services" -ForegroundColor Yellow
+                    Write-Host "  to include a subnet covering $ClientIP, or the client may be assigned to the wrong site." -ForegroundColor Yellow
                 }
                 else {
                     Write-Host "$Computer : Site '$AssignedSite' ($($SiteDCs.Count) DCs, $($SiteSubnets.Count) subnets). Client IP $ClientIP matched $MatchingSubnet." -ForegroundColor Green
@@ -2453,7 +2454,7 @@ function _Format-DiagnosticText {
         $null = $Sb.AppendLine("  Assigned Site  : $($SI.AssignedSite)")
         $null = $Sb.AppendLine("  Client IP      : $($SI.ClientIP)")
         $null = $Sb.AppendLine("  NO_CLIENT_SITE : $(if ($SI.NoClientSite) { 'YES — action required!' } else { 'No' })")
-        $null = $Sb.AppendLine("  Subnet Mapped  : $(if ($SI.SubnetMapped) { "Yes — $($SI.MatchingSubnet)" } elseif ($SI.NoClientSite) { 'No' } elseif ($SI.SubnetCount -eq 0) { 'No — site assigned via DC fallback (no subnets defined)' } else { "No — client IP $($SI.ClientIP) does not match any defined subnet" })")
+        $null = $Sb.AppendLine("  Subnet Mapped  : $(if ($SI.SubnetMapped) { "Yes — $($SI.MatchingSubnet)" } elseif ($SI.NoClientSite) { 'No' } elseif ($SI.SubnetCount -eq 0) { 'No — site assigned via DC fallback (no subnets defined)' } else { "No — client IP $($SI.ClientIP) does not match any of the $($SI.SubnetCount) defined subnet(s). Amend the subnet-to-site assignments in AD Sites and Services." })")
         $null = $Sb.AppendLine("  Subnets ($($SI.SubnetCount)): $($SI.Subnets)")
         $null = $Sb.AppendLine("  DCs ($($SI.DCCount))    : $($SI.DCs)")
         $null = $Sb.AppendLine("  Site Links     : $($SI.SiteLinks)")
@@ -2612,8 +2613,8 @@ function _Format-DiagnosticHtml {
         $SiteSuffix = if ($SI.SubnetMapped) { '' } elseif ($SI.NoClientSite) { '' } elseif ($SI.SubnetCount -eq 0) { ' (DC fallback)' } else { ' (IP not in any subnet!)' }
         $null = $Sb.AppendLine("<tr><td>Assigned Site</td><td class='$SiteClass'>$([System.Net.WebUtility]::HtmlEncode($SI.AssignedSite))$SiteSuffix</td></tr>")
         $null = $Sb.AppendLine("<tr><td>Client IP</td><td>$([System.Net.WebUtility]::HtmlEncode($SI.ClientIP))</td></tr>")
-        $MatchClass = if ($SI.SubnetMapped) { 'ok' } else { 'warn' }
-        $MatchText = if ($SI.SubnetMapped) { $SI.MatchingSubnet } elseif ($SI.SubnetCount -eq 0) { 'No subnets defined' } else { "No match in $($SI.SubnetCount) subnet(s)" }
+        $MatchClass = if ($SI.SubnetMapped) { 'ok' } elseif ($SI.SubnetCount -gt 0) { 'fail' } else { 'warn' }
+        $MatchText = if ($SI.SubnetMapped) { $SI.MatchingSubnet } elseif ($SI.SubnetCount -eq 0) { 'No subnets defined' } else { "No match — amend subnet-to-site assignments to cover $($SI.ClientIP)" }
         $null = $Sb.AppendLine("<tr><td>Matching Subnet</td><td class='$MatchClass'>$([System.Net.WebUtility]::HtmlEncode($MatchText))</td></tr>")
         $SubnetClass = if ($SI.SubnetCount -eq 0) { 'warn' } else { 'ok' }
         $null = $Sb.AppendLine("<tr><td>Subnets</td><td class='$SubnetClass'>$(if ($SI.SubnetCount -eq 0) { 'None defined &mdash; create subnets in AD Sites and Services' } else { [System.Net.WebUtility]::HtmlEncode($SI.Subnets) })</td></tr>")

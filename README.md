@@ -884,6 +884,23 @@ This project is licensed under the [MIT License](LICENSE).
 
 ---
 
+## Changelog
+
+### 1.3.0
+
+- **Fixed:** All remote functions now use `Invoke-Command` (WinRM) consistently instead of mixing RPC-based calls that fail through firewalls.
+  - `Get-NetlogonStatus`: nltest and `Test-ComputerSecureChannel` now run on the remote target via `Invoke-Command`.
+  - `Test-NetlogonSecureChannel`: Remote path uses `Invoke-Command` instead of `nltest /server:`.
+  - `Get-NetlogonEvent`: Uses `Invoke-Command` + `Get-WinEvent` instead of `Get-WinEvent -ComputerName` (RPC).
+  - `Get-DCLocatorInfo`: Fixed `$Args` parameter name collision in remote scriptblock.
+- **Added:** WinRM pre-flight check in `Invoke-NetlogonDiagnostic` for remote targets with a step-by-step troubleshooting checklist when connectivity fails.
+
+### 1.2.0
+
+- Initial public release with 13 exported functions.
+
+---
+
 ## Author
 
 **Jan Tiedemann** — Microsoft

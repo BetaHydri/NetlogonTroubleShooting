@@ -523,6 +523,15 @@ SERVER03: NO_CLIENT_SITE detected! The computer IP (10.1.50.22) does not match a
   Create a subnet in AD Sites and Services covering this IP range.
 ```
 
+> **When does NO_CLIENT_SITE actually trigger?**
+>
+> The `NO_CLIENT_SITE` condition only occurs when **multiple AD sites exist** and the client's IP address does not match any defined subnet. In a single-site environment (e.g. only `Default-First-Site-Name`), the DC assigns its own site to the client via the Netlogon secure channel — even without any subnets defined. This means:
+>
+> - **Single site, no subnets** — The client still gets a site assignment from the DC. `NO_CLIENT_SITE` will **not** trigger. This is normal for lab/test environments.
+> - **Multiple sites, missing subnet** — The DC locator cannot determine which site the client belongs to. `NO_CLIENT_SITE` **will** trigger, and the client may authenticate against a DC in the wrong site (cross-site latency).
+>
+> **Best practice:** Always define subnets in AD Sites and Services for every IP range in your network, even in single-site environments, to ensure correct site-aware DC selection.
+
 ---
 
 ### Invoke-NetlogonDiagnostic
@@ -893,6 +902,8 @@ This project is licensed under the [MIT License](LICENSE).
   - `Test-NetlogonSecureChannel`: Remote path uses `Invoke-Command` instead of `nltest /server:`.
   - `Get-NetlogonEvent`: Uses `Invoke-Command` + `Get-WinEvent` instead of `Get-WinEvent -ComputerName` (RPC).
   - `Get-DCLocatorInfo`: Fixed `$Args` parameter name collision in remote scriptblock.
+- **Fixed:** FQDN `$IsLocal` detection — passing `srv01.contoso.com` while running on `SRV01` now correctly takes the local execution path instead of unnecessarily going through WinRM (all 11 functions).
+- **Fixed:** `Get-ADSiteInfo` site detection — added `nltest /dsgetsite` fallback when `GetComputerSite()` fails in WinRM sessions (Kerberos delegation limitation). Site detail enumeration now also runs on the target machine via `Invoke-Command`.
 - **Added:** WinRM pre-flight check in `Invoke-NetlogonDiagnostic` for remote targets with a step-by-step troubleshooting checklist when connectivity fails.
 
 ### 1.2.0

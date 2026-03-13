@@ -89,8 +89,8 @@ Describe 'Module: NetlogonTroubleShooting' {
             $Manifest.CompanyName | Should -Be 'Microsoft'
         }
 
-        It 'Should have version 1.3.0' {
-            $Manifest.Version.ToString() | Should -Be '1.3.0'
+        It 'Should have version 1.5.0' {
+            $Manifest.Version.ToString() | Should -Be '1.5.0'
         }
 
         It 'Should require PowerShell 5.1' {
@@ -1086,11 +1086,89 @@ Describe 'Get-ADSiteInfo' {
             $Props | Should -Contain 'ComputerName'
             $Props | Should -Contain 'AssignedSite'
             $Props | Should -Contain 'NoClientSite'
+            $Props | Should -Contain 'SubnetMapped'
+            $Props | Should -Contain 'MatchingSubnet'
             $Props | Should -Contain 'Subnets'
             $Props | Should -Contain 'DCs'
             $Props | Should -Contain 'SubnetCount'
             $Props | Should -Contain 'DCCount'
             $Props | Should -Contain 'SiteLinks'
+        }
+    }
+}
+
+Describe '_Test-IPInSubnet (CIDR matching)' {
+
+    BeforeAll {
+        # Access the private function via the module scope
+        $Script:TestIPInSubnet = & (Get-Module NetlogonTroubleShooting) { Get-Command _Test-IPInSubnet }
+    }
+
+    Context 'IPv4 CIDR matching' {
+
+        It 'Should match an IP within a /24 subnet' {
+            & $Script:TestIPInSubnet -IPAddress '10.1.20.50' -SubnetCIDR '10.1.20.0/24' | Should -Be $true
+        }
+
+        It 'Should match the network address itself' {
+            & $Script:TestIPInSubnet -IPAddress '10.1.20.0' -SubnetCIDR '10.1.20.0/24' | Should -Be $true
+        }
+
+        It 'Should match the broadcast address' {
+            & $Script:TestIPInSubnet -IPAddress '10.1.20.255' -SubnetCIDR '10.1.20.0/24' | Should -Be $true
+        }
+
+        It 'Should NOT match an IP outside the /24 subnet' {
+            & $Script:TestIPInSubnet -IPAddress '10.1.21.1' -SubnetCIDR '10.1.20.0/24' | Should -Be $false
+        }
+
+        It 'Should match an IP within a /16 subnet' {
+            & $Script:TestIPInSubnet -IPAddress '172.16.5.100' -SubnetCIDR '172.16.0.0/16' | Should -Be $true
+        }
+
+        It 'Should NOT match an IP outside a /16 subnet' {
+            & $Script:TestIPInSubnet -IPAddress '172.17.0.1' -SubnetCIDR '172.16.0.0/16' | Should -Be $false
+        }
+
+        It 'Should match an IP within a /8 subnet' {
+            & $Script:TestIPInSubnet -IPAddress '10.255.255.254' -SubnetCIDR '10.0.0.0/8' | Should -Be $true
+        }
+
+        It 'Should match with /32 (single host)' {
+            & $Script:TestIPInSubnet -IPAddress '192.168.1.1' -SubnetCIDR '192.168.1.1/32' | Should -Be $true
+        }
+
+        It 'Should NOT match a different host with /32' {
+            & $Script:TestIPInSubnet -IPAddress '192.168.1.2' -SubnetCIDR '192.168.1.1/32' | Should -Be $false
+        }
+
+        It 'Should match any IP with /0' {
+            & $Script:TestIPInSubnet -IPAddress '1.2.3.4' -SubnetCIDR '0.0.0.0/0' | Should -Be $true
+        }
+
+        It 'Should handle /23 correctly (two /24 blocks)' {
+            & $Script:TestIPInSubnet -IPAddress '10.1.20.50' -SubnetCIDR '10.1.20.0/23' | Should -Be $true
+            & $Script:TestIPInSubnet -IPAddress '10.1.21.50' -SubnetCIDR '10.1.20.0/23' | Should -Be $true
+            & $Script:TestIPInSubnet -IPAddress '10.1.22.1' -SubnetCIDR '10.1.20.0/23' | Should -Be $false
+        }
+    }
+
+    Context 'Invalid input handling' {
+
+        It 'Should return false for invalid CIDR notation' {
+            & $Script:TestIPInSubnet -IPAddress '10.1.20.50' -SubnetCIDR 'not-a-cidr' | Should -Be $false
+        }
+
+        It 'Should return false for missing prefix length' {
+            & $Script:TestIPInSubnet -IPAddress '10.1.20.50' -SubnetCIDR '10.1.20.0' | Should -Be $false
+        }
+
+        It 'Should return false for invalid IP address' {
+            & $Script:TestIPInSubnet -IPAddress 'not-an-ip' -SubnetCIDR '10.1.20.0/24' | Should -Be $false
+        }
+
+        It 'Should return false for prefix length > 32' {
+            & $Script:TestIPInSubnet -IPAddress '10.1.20.50' -SubnetCIDR '10.1.20.0/33' | Should -Be $false
         }
     }
 }
@@ -1161,14 +1239,16 @@ Describe 'Invoke-NetlogonDiagnostic' {
             }
             Mock -ModuleName NetlogonTroubleShooting -CommandName Get-ADSiteInfo {
                 [PSCustomObject]@{
-                    AssignedSite = 'NYC'
-                    ClientIP     = '10.1.20.50'
-                    NoClientSite = $false
-                    Subnets      = '10.1.20.0/24'
-                    SubnetCount  = 1
-                    DCs          = 'DC01.contoso.com'
-                    DCCount      = 1
-                    SiteLinks    = 'NYC-London'
+                    AssignedSite   = 'NYC'
+                    ClientIP       = '10.1.20.50'
+                    NoClientSite   = $false
+                    SubnetMapped   = $true
+                    MatchingSubnet = '10.1.20.0/24'
+                    Subnets        = '10.1.20.0/24'
+                    SubnetCount    = 1
+                    DCs            = 'DC01.contoso.com'
+                    DCCount        = 1
+                    SiteLinks      = 'NYC-London'
                 }
             }
             Mock -ModuleName NetlogonTroubleShooting -CommandName Test-NetlogonDnsRecords {

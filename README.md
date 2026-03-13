@@ -513,10 +513,6 @@ SiteLinks       : NYC-London; NYC-Chicago
 SERVER01: Site 'NYC' (2 DCs, 2 subnets). Client IP 10.1.20.50 matched 10.1.20.0/24.
 ```
 
-**Screenshot (mapped subnet):**
-
-![Get-ADSiteInfo with mapped subnet](docs/ADSiteMappedSubnet.png)
-
 **Sample Output (NO_CLIENT_SITE):**
 
 ```

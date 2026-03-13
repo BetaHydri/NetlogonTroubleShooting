@@ -2110,6 +2110,39 @@ function Invoke-NetlogonDiagnostic {
         Write-Host " Time     : $Timestamp" -ForegroundColor Cyan
         Write-Host "========================================`n" -ForegroundColor Cyan
 
+        # Pre-flight: verify WinRM connectivity for remote targets
+        if (-not $IsLocal) {
+            Write-Host "[Pre-flight] Testing WinRM connectivity to $ComputerName..." -ForegroundColor White
+            $WinRMOk = $false
+            try {
+                $WsManResult = Test-WSMan -ComputerName $ComputerName -ErrorAction Stop
+                $WinRMOk = $null -ne $WsManResult
+            }
+            catch {
+                $WinRMOk = $false
+            }
+
+            if (-not $WinRMOk) {
+                Write-Host "`nWinRM connectivity to $ComputerName FAILED." -ForegroundColor Red
+                Write-Host "All remote diagnostics use PowerShell Remoting (WinRM) and will fail without it." -ForegroundColor Red
+                Write-Host "`nTroubleshooting checklist for the remote computer ($ComputerName):" -ForegroundColor Yellow
+                Write-Host "  1. Ensure the WinRM service is running:"                                         -ForegroundColor Yellow
+                Write-Host "       Get-Service WinRM | Start-Service"                                           -ForegroundColor Yellow
+                Write-Host "  2. Enable PowerShell Remoting (run on $ComputerName as Administrator):"          -ForegroundColor Yellow
+                Write-Host "       Enable-PSRemoting -Force"                                                    -ForegroundColor Yellow
+                Write-Host "  3. Verify Windows Firewall inbound rules allow WinRM (TCP 5985/5986):"           -ForegroundColor Yellow
+                Write-Host "       Get-NetFirewallRule -Name 'WINRM-HTTP-In-TCP*' | Enable-NetFirewallRule"     -ForegroundColor Yellow
+                Write-Host "  4. If the remote computer is in a workgroup or different domain, configure TrustedHosts:" -ForegroundColor Yellow
+                Write-Host "       Set-Item WSMan:\localhost\Client\TrustedHosts -Value '$ComputerName'"        -ForegroundColor Yellow
+                Write-Host "  5. Verify basic network connectivity:"                                            -ForegroundColor Yellow
+                Write-Host "       Test-NetConnection -ComputerName $ComputerName -Port 5985"                   -ForegroundColor Yellow
+                Write-Host ""
+                Write-Error "Cannot proceed with remote diagnostics — WinRM connection to $ComputerName failed. Fix connectivity first (see checklist above)."
+                return
+            }
+            Write-Host "[Pre-flight] WinRM connectivity OK.`n" -ForegroundColor Green
+        }
+
         $Report = [ordered]@{}
 
         # 1. Netlogon Service Status

@@ -4,7 +4,7 @@
 ![PowerShell 7.x](https://img.shields.io/badge/PowerShell-7.x-blue?logo=powershell&logoColor=white)
 ![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
-![Version: 1.2.0](https://img.shields.io/badge/Version-1.2.0-brightgreen)
+![Version: 1.3.0](https://img.shields.io/badge/Version-1.3.0-brightgreen)
 ![Pester Tests](https://img.shields.io/badge/Pester-Passing-success?logo=dotnet)
 ![Active Directory](https://img.shields.io/badge/Active%20Directory-Netlogon-orange)
 
@@ -25,6 +25,7 @@ A PowerShell module for diagnosing and troubleshooting **Netlogon** issues in Ac
 - **AD Site Information** — Show site assignment, subnet mapping, and DCs in the site. Detect `NO_CLIENT_SITE` conditions.
 - **Comprehensive Diagnostic Report** — One-shot `Invoke-NetlogonDiagnostic` combining all checks into a text or HTML report.
 - **Remote Support** — All commands accept `-ComputerName` for remote execution via PowerShell Remoting (WinRM).
+- **WinRM Pre-flight Check** — `Invoke-NetlogonDiagnostic` validates WinRM connectivity before running remote checks and provides a step-by-step troubleshooting checklist (WinRM service, firewall rules TCP 5985/5986, `Enable-PSRemoting`, TrustedHosts) when the connection fails.
 
 ---
 
@@ -535,7 +536,7 @@ Invoke-NetlogonDiagnostic
 # HTML report saved to file
 Invoke-NetlogonDiagnostic -OutputFormat HTML -OutputPath 'C:\Reports\netlogon_diag.html'
 
-# Diagnose a remote server
+# Diagnose a remote server (includes WinRM pre-flight check)
 Invoke-NetlogonDiagnostic -ComputerName 'Server01'
 
 # Save text report to file
@@ -554,6 +555,11 @@ Invoke-NetlogonDiagnostic -OutputFormat Text -OutputPath 'C:\Reports\netlogon_di
 | 6 | DC Port Connectivity | All AD ports tested per DC with open/blocked |
 | 7 | Time Synchronization | Time skew, time source, threshold check |
 | 8 | Recent Netlogon Events | Last 24h of Netlogon events from the event log |
+
+> **Remote targets:** When `-ComputerName` points to a remote machine, a WinRM pre-flight
+> check runs first. If WinRM is unreachable, the diagnostic stops early and displays a
+> numbered troubleshooting checklist covering the WinRM service, `Enable-PSRemoting`,
+> firewall inbound rules (TCP 5985/5986), TrustedHosts, and basic connectivity.
 
 **Sample Text Report (excerpt):**
 

@@ -89,8 +89,8 @@ Describe 'Module: NetlogonTroubleShooting' {
             $Manifest.CompanyName | Should -Be 'Microsoft'
         }
 
-        It 'Should have version 1.2.0' {
-            $Manifest.Version.ToString() | Should -Be '1.2.0'
+        It 'Should have version 1.3.0' {
+            $Manifest.Version.ToString() | Should -Be '1.3.0'
         }
 
         It 'Should require PowerShell 5.1' {
@@ -1120,6 +1120,9 @@ Describe 'Invoke-NetlogonDiagnostic' {
 
         BeforeAll {
             # Mock all sub-functions to avoid real network/AD calls
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Test-WSMan {
+                [PSCustomObject]@{ ProductVendor = 'Microsoft Corporation' }
+            }
             Mock -ModuleName NetlogonTroubleShooting -CommandName Get-NetlogonStatus {
                 [PSCustomObject]@{
                     ServiceStatus       = 'Running'
@@ -1241,6 +1244,24 @@ Describe 'Invoke-NetlogonDiagnostic' {
             Test-Path $TempFile | Should -Be $true
             $Content = Get-Content $TempFile -Raw
             $Content | Should -Match 'NETLOGON DIAGNOSTIC REPORT'
+        }
+    }
+
+    Context 'When WinRM pre-flight fails for remote target' {
+
+        BeforeAll {
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Test-WSMan {
+                throw [System.Exception]::new('The WinRM client cannot process the request.')
+            }
+        }
+
+        It 'Should fail with a WinRM connectivity error for remote targets' {
+            { Invoke-NetlogonDiagnostic -ComputerName 'UNREACHABLE01' -ErrorAction Stop } | Should -Throw '*WinRM*'
+        }
+
+        It 'Should not call any diagnostic functions when WinRM fails' {
+            Invoke-NetlogonDiagnostic -ComputerName 'UNREACHABLE01' -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName NetlogonTroubleShooting -CommandName Test-WSMan -Times 1 -Exactly
         }
     }
 }

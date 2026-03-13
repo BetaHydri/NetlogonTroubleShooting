@@ -511,7 +511,7 @@ function Get-NetlogonDebugStatus {
                     0x20000004 { 'Standard' }
                     0 { 'Disabled' }
                     $null { 'Disabled' }
-                    default { "Custom (0x$($DBFlag.ToString('X')))" }
+                    default { 'Custom (0x{0:X})' -f [int]$DBFlag }
                 }
 
                 # Get log file info for local queries

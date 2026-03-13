@@ -4,7 +4,7 @@
 ![PowerShell 7.x](https://img.shields.io/badge/PowerShell-7.x-blue?logo=powershell&logoColor=white)
 ![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
-![Version: 1.4.0](https://img.shields.io/badge/Version-1.4.0-brightgreen)
+![Version: 1.5.0](https://img.shields.io/badge/Version-1.5.0-brightgreen)
 ![Pester Tests](https://img.shields.io/badge/Pester-Passing-success?logo=dotnet)
 ![Active Directory](https://img.shields.io/badge/Active%20Directory-Netlogon-orange)
 
@@ -497,19 +497,20 @@ Get-ADSiteInfo -ComputerName 'Server01','Server02'
 **Sample Output:**
 
 ```
-ComputerName : SERVER01
-ClientIP     : 10.1.20.50
-AssignedSite : NYC
-NltestSite   : NYC
-NoClientSite : False
-SubnetMapped : True
-Subnets      : 10.1.20.0/24; 10.1.21.0/24
-SubnetCount  : 2
-DCs          : DC01.contoso.com; DC02.contoso.com
-DCCount      : 2
-SiteLinks    : NYC-London; NYC-Chicago
+ComputerName    : SERVER01
+ClientIP        : 10.1.20.50
+AssignedSite    : NYC
+NltestSite      : NYC
+NoClientSite    : False
+SubnetMapped    : True
+MatchingSubnet  : 10.1.20.0/24
+Subnets         : 10.1.20.0/24; 10.1.21.0/24
+SubnetCount     : 2
+DCs             : DC01.contoso.com; DC02.contoso.com
+DCCount         : 2
+SiteLinks       : NYC-London; NYC-Chicago
 
-SERVER01: Site 'NYC' (2 DCs, 2 subnets).
+SERVER01: Site 'NYC' (2 DCs, 2 subnets). Client IP 10.1.20.50 matched 10.1.20.0/24.
 ```
 
 **Screenshot (mapped subnet):**
@@ -519,11 +520,12 @@ SERVER01: Site 'NYC' (2 DCs, 2 subnets).
 **Sample Output (NO_CLIENT_SITE):**
 
 ```
-ComputerName : SERVER03
-ClientIP     : 10.1.50.22
-AssignedSite : NO_CLIENT_SITE
-NoClientSite : True
-SubnetMapped : False
+ComputerName    : SERVER03
+ClientIP        : 10.1.50.22
+AssignedSite    : NO_CLIENT_SITE
+NoClientSite    : True
+SubnetMapped    : False
+MatchingSubnet  :
 
 SERVER03: NO_CLIENT_SITE detected! The computer IP (10.1.50.22) does not match any AD subnet.
   Create a subnet in AD Sites and Services covering this IP range.
@@ -532,17 +534,18 @@ SERVER03: NO_CLIENT_SITE detected! The computer IP (10.1.50.22) does not match a
 **Sample Output (DC fallback — no subnets defined):**
 
 ```
-ComputerName : DC01
-ClientIP     : 172.16.1.11
-AssignedSite : Default-First-Site-Name
-NltestSite   : Default-First-Site-Name
-NoClientSite : False
-SubnetMapped : False
-Subnets      :
-SubnetCount  : 0
-DCs          : DC01.contoso.com
-DCCount      : 1
-SiteLinks    : DEFAULTIPSITELINK
+ComputerName    : DC01
+ClientIP        : 172.16.1.11
+AssignedSite    : Default-First-Site-Name
+NltestSite      : Default-First-Site-Name
+NoClientSite    : False
+SubnetMapped    : False
+MatchingSubnet  :
+Subnets         :
+SubnetCount     : 0
+DCs             : DC01.contoso.com
+DCCount         : 1
+SiteLinks       : DEFAULTIPSITELINK
 
 DC01 : Site 'Default-First-Site-Name' (DC fallback — no subnets defined!). 1 DCs.
   WARNING: The site was assigned by the DC as a fallback, not by subnet mapping.
@@ -926,6 +929,14 @@ This project is licensed under the [MIT License](LICENSE).
 ---
 
 ## Changelog
+
+### 1.5.0
+
+- **Improved:** `Get-ADSiteInfo` now performs **accurate CIDR subnet matching** — the client IP is checked against each subnet defined in the site using proper network/prefix-length calculation. Previously, `SubnetMapped` was `$true` whenever the site had any subnets; now it verifies the client IP actually falls within one of them.
+  - Added `MatchingSubnet` property showing which CIDR subnet matched the client IP (e.g. `10.1.20.0/24`), or empty if no match.
+  - New console state: subnets exist but the client IP doesn't match any of them → **red** warning with the list of defined subnets that don't cover the IP.
+  - Green output now shows which subnet matched: `Client IP 10.1.20.50 matched 10.1.20.0/24`.
+- **Added:** Private `_Test-IPInSubnet` helper function for CIDR matching (works on PowerShell 5.1 and 7.x, IPv4).
 
 ### 1.4.0
 

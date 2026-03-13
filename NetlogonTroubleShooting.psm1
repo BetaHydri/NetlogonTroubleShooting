@@ -2062,18 +2062,18 @@ function Get-ADSiteInfo {
                 }
 
                 [PSCustomObject]@{
-                    PSTypeName       = 'NetlogonTroubleShooting.SiteInfo'
-                    ComputerName     = $Computer
-                    ClientIP         = $ClientIP
-                    AssignedSite     = if ($AssignedSite) { $AssignedSite } else { 'NO_CLIENT_SITE' }
-                    NltestSite       = $NltestSite
-                    NoClientSite     = $NoClientSite
-                    SubnetMapped     = $SubnetMapped
-                    Subnets          = $SiteSubnets -join '; '
-                    SubnetCount      = $SiteSubnets.Count
-                    DCs              = $SiteDCs -join '; '
-                    DCCount          = $SiteDCs.Count
-                    SiteLinks        = $SiteLinks -join '; '
+                    PSTypeName   = 'NetlogonTroubleShooting.SiteInfo'
+                    ComputerName = $Computer
+                    ClientIP     = $ClientIP
+                    AssignedSite = if ($AssignedSite) { $AssignedSite } else { 'NO_CLIENT_SITE' }
+                    NltestSite   = $NltestSite
+                    NoClientSite = $NoClientSite
+                    SubnetMapped = $SubnetMapped
+                    Subnets      = $SiteSubnets -join '; '
+                    SubnetCount  = $SiteSubnets.Count
+                    DCs          = $SiteDCs -join '; '
+                    DCCount      = $SiteDCs.Count
+                    SiteLinks    = $SiteLinks -join '; '
                 }
 
                 # Console feedback

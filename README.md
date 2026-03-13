@@ -546,6 +546,10 @@ DC01 : Site 'Default-First-Site-Name' (DC fallback — no subnets defined!). 1 D
   Create a subnet in AD Sites and Services covering the 172.16.1.11 range.
 ```
 
+**Screenshot:**
+
+![Get-ADSiteInfo sample output](docs/ADSiteInfo.png)
+
 > **When does NO_CLIENT_SITE actually trigger?**
 >
 > The `NO_CLIENT_SITE` condition only occurs when **multiple AD sites exist** and the client's IP address does not match any defined subnet. In a single-site environment (e.g. only `Default-First-Site-Name`), the DC assigns its own site to the client via the Netlogon secure channel — even without any subnets defined. This means:

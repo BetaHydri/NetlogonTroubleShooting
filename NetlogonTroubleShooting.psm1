@@ -835,6 +835,14 @@ function Read-NetlogonDebugLog {
                                 }
                             }
 
+                            # Resolve well-known Netlogon message patterns that lack a status code
+                            if (-not $StatusDescription) {
+                                if ($Message -match 'similar query failed recently\s*(\d+)') {
+                                    $StatusCode = 'NEGATIVE_CACHE_HIT'
+                                    $StatusDescription = "Netlogon negative cache hit (throttled). A previous DC locator query failed and Netlogon is returning the cached failure instead of retrying. The number ($($Matches[1])) indicates how many repeat queries were suppressed. This is a symptom — find the original failure that occurred before this entry. In single-DC environments, this is expected and harmless."
+                                }
+                            }
+
                             $Entry = [PSCustomObject]@{
                                 PSTypeName        = 'NetlogonTroubleShooting.LogEntry'
                                 SourceFile        = $FileInfo.Name

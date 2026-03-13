@@ -512,6 +512,10 @@ SiteLinks    : NYC-London; NYC-Chicago
 SERVER01: Site 'NYC' (2 DCs, 2 subnets).
 ```
 
+**Screenshot (mapped subnet):**
+
+![Get-ADSiteInfo with mapped subnet](docs/ADSiteMappedSubnet.png)
+
 **Sample Output (NO_CLIENT_SITE):**
 
 ```

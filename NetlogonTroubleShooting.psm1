@@ -823,13 +823,13 @@ function Read-NetlogonDebugLog {
                                 $StatusCode = $Matches[1]
                             }
                             elseif ($Message -notmatch 'DsGetDcName:\s+results as follows:' -and
-                                    $Message -notmatch 'DSGETDC_VALID_FLAGS is' -and
-                                    $Message -match '(?:returned|Return[s]?|status(?:\s+to)?|error|Error|result)[:\s]+\(?(0x[0-9A-Fa-f]+)\)?' ) {
+                                $Message -notmatch 'DSGETDC_VALID_FLAGS is' -and
+                                $Message -match '(?:returned|Return[s]?|status(?:\s+to)?|error|Error|result)[:\s]+\(?(0x[0-9A-Fa-f]+)\)?' ) {
                                 $StatusCode = $Matches[1]
                             }
                             elseif ($Message -notmatch 'DsGetDcName:\s+results as follows:' -and
-                                    $Message -notmatch 'DSGETDC_VALID_FLAGS is' -and
-                                    $Message -match '(?:^|[\s:])(?:Failed to increment waiters:\s+)(0x[0-9A-Fa-f]+)') {
+                                $Message -notmatch 'DSGETDC_VALID_FLAGS is' -and
+                                $Message -match '(?:^|[\s:])(?:Failed to increment waiters:\s+)(0x[0-9A-Fa-f]+)') {
                                 $StatusCode = $Matches[1]
                             }
 

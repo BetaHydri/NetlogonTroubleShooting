@@ -931,7 +931,8 @@ function Get-NetlogonStatus {
                             $DomName = $null
                             try {
                                 $DomName = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
-                            } catch { }
+                            }
+                            catch { }
                             $SC = $null; $DC = $null; $TD = $null
                             if ($DomName) {
                                 try { $SC = (nltest /sc_query:$DomName 2>&1 | Out-String).Trim() } catch { $SC = "Failed: $_" }

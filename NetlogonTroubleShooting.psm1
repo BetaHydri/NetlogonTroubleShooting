@@ -11,10 +11,10 @@ function _Test-IPInSubnet {
     try {
         if ($SubnetCIDR -notmatch '^(.+)/([0-9]+)$') { return $false }
         $NetworkStr = $Matches[1]
-        $PrefixLen  = [int]$Matches[2]
+        $PrefixLen = [int]$Matches[2]
         if ($PrefixLen -lt 0 -or $PrefixLen -gt 32) { return $false }
 
-        $IPBytes      = ([System.Net.IPAddress]::Parse($IPAddress)).GetAddressBytes()
+        $IPBytes = ([System.Net.IPAddress]::Parse($IPAddress)).GetAddressBytes()
         $NetworkBytes = ([System.Net.IPAddress]::Parse($NetworkStr)).GetAddressBytes()
 
         # Build the subnet mask as 4 bytes
@@ -2110,19 +2110,19 @@ function Get-ADSiteInfo {
                 }
 
                 [PSCustomObject]@{
-                    PSTypeName      = 'NetlogonTroubleShooting.SiteInfo'
-                    ComputerName    = $Computer
-                    ClientIP        = $ClientIP
-                    AssignedSite    = if ($AssignedSite) { $AssignedSite } else { 'NO_CLIENT_SITE' }
-                    NltestSite      = $NltestSite
-                    NoClientSite    = $NoClientSite
-                    SubnetMapped    = $SubnetMapped
-                    MatchingSubnet  = $MatchingSubnet
-                    Subnets         = $SiteSubnets -join '; '
-                    SubnetCount     = $SiteSubnets.Count
-                    DCs             = $SiteDCs -join '; '
-                    DCCount         = $SiteDCs.Count
-                    SiteLinks       = $SiteLinks -join '; '
+                    PSTypeName     = 'NetlogonTroubleShooting.SiteInfo'
+                    ComputerName   = $Computer
+                    ClientIP       = $ClientIP
+                    AssignedSite   = if ($AssignedSite) { $AssignedSite } else { 'NO_CLIENT_SITE' }
+                    NltestSite     = $NltestSite
+                    NoClientSite   = $NoClientSite
+                    SubnetMapped   = $SubnetMapped
+                    MatchingSubnet = $MatchingSubnet
+                    Subnets        = $SiteSubnets -join '; '
+                    SubnetCount    = $SiteSubnets.Count
+                    DCs            = $SiteDCs -join '; '
+                    DCCount        = $SiteDCs.Count
+                    SiteLinks      = $SiteLinks -join '; '
                 }
 
                 # Console feedback

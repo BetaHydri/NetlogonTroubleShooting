@@ -89,8 +89,8 @@ Describe 'Module: NetlogonTroubleShooting' {
             $Manifest.CompanyName | Should -Be 'Microsoft'
         }
 
-        It 'Should have version 1.5.0' {
-            $Manifest.Version.ToString() | Should -Be '1.5.0'
+        It 'Should have version 1.5.1' {
+            $Manifest.Version.ToString() | Should -Be '1.5.1'
         }
 
         It 'Should require PowerShell 5.1' {
@@ -486,6 +486,56 @@ Describe 'Read-NetlogonDebugLog' {
             $Entry = $Results | Where-Object { $_.StatusCode -eq '0x0' }
             $Entry.StatusDescription | Should -Not -BeNullOrEmpty
             $Entry.StatusDescription | Should -BeLike '*Success*'
+        }
+    }
+
+    Context 'When netlogon.log contains benign messages with error-like keywords' {
+
+        BeforeAll {
+            $Script:FpDir = Join-Path $TestDrive 'debug-fp'
+            New-Item -Path $Script:FpDir -ItemType Directory -Force | Out-Null
+            $Script:FpLog = Join-Path $Script:FpDir 'netlogon.log'
+
+            $LogContent = @(
+                '03/13 20:40:03 [SESSION] [3692] CONTOSO: Failed to increment holders: 0x0000000000000000 0x00000000'
+                '03/13 20:40:04 [MISC] [668] LoadBalanceDebug (Flags: FORCE DS DNS RET_DNS ): DC=DC01, SrvCount=1, FailedAQueryCount=0, DcsPinged=1, LoopIndex=0'
+                '03/13 20:40:05 [SESSION] [1044] NlSessionSetup: DC01.contoso.com: Session setup FAILED, Status = STATUS_ACCESS_DENIED'
+            )
+            $LogContent | Set-Content -Path $Script:FpLog -Encoding UTF8
+        }
+
+        It 'Should NOT flag "Failed to increment holders" as an error' {
+            $Results = Read-NetlogonDebugLog -Path $Script:FpLog
+            $Entry = $Results | Where-Object { $_.Message -match 'Failed to increment holders' }
+            $Entry | Should -Not -BeNullOrEmpty
+            $Entry.IsError | Should -Be $false
+        }
+
+        It 'Should NOT flag LoadBalanceDebug with FailedAQueryCount as an error' {
+            $Results = Read-NetlogonDebugLog -Path $Script:FpLog
+            $Entry = $Results | Where-Object { $_.Message -match 'LoadBalanceDebug' }
+            $Entry | Should -Not -BeNullOrEmpty
+            $Entry.IsError | Should -Be $false
+        }
+
+        It 'Should categorize LoadBalanceDebug as DCDiscovery' {
+            $Results = Read-NetlogonDebugLog -Path $Script:FpLog
+            $Entry = $Results | Where-Object { $_.Message -match 'LoadBalanceDebug' }
+            $Entry.Category | Should -Be 'DCDiscovery'
+        }
+
+        It 'Should still flag genuine FAILED messages as errors' {
+            $Results = Read-NetlogonDebugLog -Path $Script:FpLog
+            $Entry = $Results | Where-Object { $_.Message -match 'Session setup FAILED' }
+            $Entry | Should -Not -BeNullOrEmpty
+            $Entry.IsError | Should -Be $true
+        }
+
+        It 'Should not return false positives with -ErrorsOnly' {
+            $Results = Read-NetlogonDebugLog -Path $Script:FpLog -ErrorsOnly
+            $Results | Where-Object { $_.Message -match 'Failed to increment holders' } | Should -BeNullOrEmpty
+            $Results | Where-Object { $_.Message -match 'LoadBalanceDebug' } | Should -BeNullOrEmpty
+            $Results.Count | Should -Be 1
         }
     }
 

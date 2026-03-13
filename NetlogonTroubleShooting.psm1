@@ -623,12 +623,14 @@ function Read-NetlogonDebugLog {
         $BakPath = $Path -replace '\.log$', '.bak'
 
         # Patterns that indicate errors or problems
+        # Generic keywords use word boundaries (\b) to prevent false positives
+        # on compound words like FailedAQueryCount or embedded substrings.
         $ErrorPatterns = @(
             'NO_CLIENT_SITE'
-            'FATAL'
-            'ERROR'
-            'FAILED'
-            'FAILURE'
+            '\bFATAL\b'
+            '\bERROR\b'
+            '\bFAILED\b'
+            '\bFAILURE\b'
             'STATUS_ACCESS_DENIED'
             'STATUS_NO_TRUST_SAM_ACCOUNT'
             'STATUS_WRONG_PASSWORD'
@@ -645,12 +647,20 @@ function Read-NetlogonDebugLog {
             'STATUS_CONNECTION_REFUSED'
             'STATUS_IO_TIMEOUT'
         )
-        $ErrorRegex = ($ErrorPatterns | ForEach-Object { [regex]::Escape($_) }) -join '|'
+        # Patterns already include regex syntax where needed, so join directly
+        $ErrorRegex = $ErrorPatterns -join '|'
+
+        # Known benign Netlogon messages that contain error-like keywords
+        # but are not actual errors (false-positive exclusions)
+        $FalsePositivePatterns = @(
+            'Failed to increment holders'
+        )
+        $FalsePositiveRegex = ($FalsePositivePatterns | ForEach-Object { [regex]::Escape($_) }) -join '|'
 
         # Category-based keyword patterns
         $CategoryPatterns = @{
             'Authentication'  = 'NlPrintRpcDebug|LOGON|AUTHENTICATE|PASSWORD|TRUST|CREDENTIAL|SAM_ACCOUNT'
-            'DCDiscovery'     = 'SITE_LESS_DC|DcGetDc|LOCATOR|DC_DISCOVERY|DsGetDc|DC_LIST|PICK_DC'
+            'DCDiscovery'     = 'SITE_LESS_DC|DcGetDc|LOCATOR|DC_DISCOVERY|DsGetDc|DC_LIST|PICK_DC|LoadBalanceDebug'
             'SiteInfo'        = 'NO_CLIENT_SITE|SITE|SUBNET|DsrGetSiteName|NlGetAssignedSiteName'
             'DnsRegistration' = 'DNS|DnsRegister|DnsDeregister|NlDns|_ldap\._tcp|_kerberos'
             'SecureChannel'   = 'SECURE_CHANNEL|NlSessionSetup|NlSetServerClientSession|SC_|CHANGELOG'
@@ -779,6 +789,11 @@ function Read-NetlogonDebugLog {
 
                             # Determine if this is an error line
                             $IsError = [regex]::IsMatch($Message, $ErrorRegex, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+                            # Exclude known false positives
+                            if ($IsError -and $FalsePositiveRegex -and
+                                [regex]::IsMatch($Message, $FalsePositiveRegex, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+                                $IsError = $false
+                            }
 
                             # Apply error filter
                             if ($ErrorsOnly -and -not $IsError) {

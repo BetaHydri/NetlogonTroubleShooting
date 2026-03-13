@@ -4,7 +4,7 @@
 ![PowerShell 7.x](https://img.shields.io/badge/PowerShell-7.x-blue?logo=powershell&logoColor=white)
 ![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
-![Version: 1.5.0](https://img.shields.io/badge/Version-1.5.0-brightgreen)
+![Version: 1.5.1](https://img.shields.io/badge/Version-1.5.1-brightgreen)
 ![Pester Tests](https://img.shields.io/badge/Pester-Passing-success?logo=dotnet)
 ![Active Directory](https://img.shields.io/badge/Active%20Directory-Netlogon-orange)
 
@@ -925,6 +925,12 @@ This project is licensed under the [MIT License](LICENSE).
 ---
 
 ## Changelog
+
+### 1.5.1
+
+- **Fixed:** `Read-NetlogonDebugLog` false-positive error detection — generic keywords (`FAILED`, `ERROR`, `FAILURE`, `FATAL`) now use word-boundary matching (`\b`) so compound tokens like `FailedAQueryCount` no longer trigger `IsError = True`.
+- **Fixed:** Added a false-positive exclusion list for known benign Netlogon messages. The message `"Failed to increment holders: 0x0 0x0"` (a harmless session reference-counting entry with `STATUS_SUCCESS`) is no longer flagged as an error.
+- **Improved:** `LoadBalanceDebug` lines are now categorised as `DCDiscovery` instead of `DnsRegistration`.
 
 ### 1.5.0
 

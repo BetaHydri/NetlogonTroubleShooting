@@ -147,7 +147,7 @@ function Get-NetlogonEvent {
     process {
         foreach ($Computer in $ComputerName) {
             Write-Verbose "Querying Netlogon events on $Computer..."
-            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.')
+            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.') -or (($Computer -split '\.')[0] -eq $env:COMPUTERNAME)
 
             # Build filter hashtables for both log sources
             $LogSources = @(
@@ -259,7 +259,7 @@ function Enable-NetlogonDebug {
 
     process {
         foreach ($Computer in $ComputerName) {
-            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.')
+            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.') -or (($Computer -split '\.')[0] -eq $env:COMPUTERNAME)
 
             if ($PSCmdlet.ShouldProcess($Computer, "Enable Netlogon debug logging (Level: $Level)")) {
                 try {
@@ -348,7 +348,7 @@ function Disable-NetlogonDebug {
 
     process {
         foreach ($Computer in $ComputerName) {
-            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.')
+            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.') -or (($Computer -split '\.')[0] -eq $env:COMPUTERNAME)
 
             if ($PSCmdlet.ShouldProcess($Computer, "Disable Netlogon debug logging")) {
                 try {
@@ -430,7 +430,7 @@ function Get-NetlogonDebugStatus {
 
     process {
         foreach ($Computer in $ComputerName) {
-            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.')
+            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.') -or (($Computer -split '\.')[0] -eq $env:COMPUTERNAME)
 
             try {
                 if ($IsLocal) {
@@ -879,7 +879,7 @@ function Get-NetlogonStatus {
 
             try {
                 # Get Netlogon service status
-                $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.')
+                $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.') -or (($Computer -split '\.')[0] -eq $env:COMPUTERNAME)
                 if ($IsLocal) {
                     $Service = Get-Service -Name 'Netlogon' -ErrorAction Stop
                 }
@@ -1070,7 +1070,7 @@ function Test-NetlogonSecureChannel {
         foreach ($Computer in $ComputerName) {
             Write-Verbose "Testing Netlogon secure channel on $Computer..."
 
-            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.')
+            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.') -or (($Computer -split '\.')[0] -eq $env:COMPUTERNAME)
 
             try {
                 $Result = [ordered]@{
@@ -1324,7 +1324,7 @@ function Test-DCPortConnectivity {
     }
 
     process {
-        $IsLocal = ($ComputerName -eq $env:COMPUTERNAME) -or ($ComputerName -eq 'localhost') -or ($ComputerName -eq '.')
+        $IsLocal = ($ComputerName -eq $env:COMPUTERNAME) -or ($ComputerName -eq 'localhost') -or ($ComputerName -eq '.') -or (($ComputerName -split '\.')[0] -eq $env:COMPUTERNAME)
 
         # Discover DCs if none specified
         if (-not $DomainController) {
@@ -1585,7 +1585,7 @@ function Test-TimeSynchronization {
 
     process {
         foreach ($Computer in $ComputerName) {
-            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.')
+            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.') -or (($Computer -split '\.')[0] -eq $env:COMPUTERNAME)
 
             try {
                 # Get w32time status
@@ -1778,7 +1778,7 @@ function Get-DCLocatorInfo {
     )
 
     process {
-        $IsLocal = ($ComputerName -eq $env:COMPUTERNAME) -or ($ComputerName -eq 'localhost') -or ($ComputerName -eq '.')
+        $IsLocal = ($ComputerName -eq $env:COMPUTERNAME) -or ($ComputerName -eq 'localhost') -or ($ComputerName -eq '.') -or (($ComputerName -split '\.')[0] -eq $env:COMPUTERNAME)
 
         # Discover domain if not specified
         if (-not $DomainName) {
@@ -1906,7 +1906,7 @@ function Get-ADSiteInfo {
 
     process {
         foreach ($Computer in $ComputerName) {
-            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.')
+            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.') -or (($Computer -split '\.')[0] -eq $env:COMPUTERNAME)
 
             try {
                 # Determine the site for this computer
@@ -2151,7 +2151,7 @@ function Invoke-NetlogonDiagnostic {
 
     process {
         $Timestamp = Get-Date
-        $IsLocal = ($ComputerName -eq $env:COMPUTERNAME) -or ($ComputerName -eq 'localhost') -or ($ComputerName -eq '.')
+        $IsLocal = ($ComputerName -eq $env:COMPUTERNAME) -or ($ComputerName -eq 'localhost') -or ($ComputerName -eq '.') -or (($ComputerName -split '\.')[0] -eq $env:COMPUTERNAME)
 
         Write-Host "`n========================================" -ForegroundColor Cyan
         Write-Host " Netlogon Diagnostic Report" -ForegroundColor Cyan

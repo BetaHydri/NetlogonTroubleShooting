@@ -4,7 +4,7 @@
 ![PowerShell 7.x](https://img.shields.io/badge/PowerShell-7.x-blue?logo=powershell&logoColor=white)
 ![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
-![Version: 1.3.0](https://img.shields.io/badge/Version-1.3.0-brightgreen)
+![Version: 1.4.0](https://img.shields.io/badge/Version-1.4.0-brightgreen)
 ![Pester Tests](https://img.shields.io/badge/Pester-Passing-success?logo=dotnet)
 ![Active Directory](https://img.shields.io/badge/Active%20Directory-Netlogon-orange)
 
@@ -502,6 +502,7 @@ ClientIP     : 10.1.20.50
 AssignedSite : NYC
 NltestSite   : NYC
 NoClientSite : False
+SubnetMapped : True
 Subnets      : 10.1.20.0/24; 10.1.21.0/24
 SubnetCount  : 2
 DCs          : DC01.contoso.com; DC02.contoso.com
@@ -518,9 +519,31 @@ ComputerName : SERVER03
 ClientIP     : 10.1.50.22
 AssignedSite : NO_CLIENT_SITE
 NoClientSite : True
+SubnetMapped : False
 
 SERVER03: NO_CLIENT_SITE detected! The computer IP (10.1.50.22) does not match any AD subnet.
   Create a subnet in AD Sites and Services covering this IP range.
+```
+
+**Sample Output (DC fallback — no subnets defined):**
+
+```
+ComputerName : DC01
+ClientIP     : 172.16.1.11
+AssignedSite : Default-First-Site-Name
+NltestSite   : Default-First-Site-Name
+NoClientSite : False
+SubnetMapped : False
+Subnets      :
+SubnetCount  : 0
+DCs          : DC01.contoso.com
+DCCount      : 1
+SiteLinks    : DEFAULTIPSITELINK
+
+DC01 : Site 'Default-First-Site-Name' (DC fallback — no subnets defined!). 1 DCs.
+  WARNING: The site was assigned by the DC as a fallback, not by subnet mapping.
+  In a multi-site environment, clients may authenticate to the wrong DC.
+  Create a subnet in AD Sites and Services covering the 172.16.1.11 range.
 ```
 
 > **When does NO_CLIENT_SITE actually trigger?**
@@ -718,6 +741,7 @@ Get-DCLocatorInfo -ForceRediscovery -SiteName 'NYC'
 
 **What to look for:**
 - `NoClientSite = True` → The machine's IP doesn't match any AD subnet. Create a subnet in AD Sites and Services.
+- `SubnetMapped = False` (with a site assigned) → The site was assigned via DC fallback, not a proper subnet match. Create subnets to ensure correct site-aware DC selection.
 - Site-specific DNS records **not resolved** → Run `nltest /dsregdns` on the DC, or check DNS replication.
 - DC is in a **different site** → Verify subnet-to-site mapping and site link costs.
 
@@ -810,7 +834,7 @@ $Servers | ForEach-Object { Test-DCPortConnectivity -ComputerName $_ } |
 
 # Site assignment for all servers
 $Servers | ForEach-Object { Get-ADSiteInfo -ComputerName $_ } |
-    Format-Table ComputerName, AssignedSite, ClientIP, NoClientSite -AutoSize
+    Format-Table ComputerName, AssignedSite, ClientIP, SubnetMapped, NoClientSite -AutoSize
 
 # Generate HTML reports for each server
 $Servers | ForEach-Object {
@@ -894,6 +918,13 @@ This project is licensed under the [MIT License](LICENSE).
 ---
 
 ## Changelog
+
+### 1.4.0
+
+- **Improved:** `Get-ADSiteInfo` now detects when a site is assigned via DC fallback rather than proper subnet mapping. Added `SubnetMapped` property to the output object.
+  - `SubnetMapped = $true` — The site was determined by matching the client IP to a defined AD subnet (correct configuration).
+  - `SubnetMapped = $false` (with `NoClientSite = $false`) — The DC assigned its own site as a fallback because no subnets are defined. Console output shows a yellow warning with remediation guidance.
+- **Improved:** Text and HTML diagnostic reports (`Invoke-NetlogonDiagnostic`) now display the `Subnet Mapped` status and highlight missing subnets as a warning.
 
 ### 1.3.0
 

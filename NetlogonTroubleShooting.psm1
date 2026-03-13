@@ -147,6 +147,7 @@ function Get-NetlogonEvent {
     process {
         foreach ($Computer in $ComputerName) {
             Write-Verbose "Querying Netlogon events on $Computer..."
+            $IsLocal = ($Computer -eq $env:COMPUTERNAME) -or ($Computer -eq 'localhost') -or ($Computer -eq '.')
 
             # Build filter hashtables for both log sources
             $LogSources = @(
@@ -163,7 +164,15 @@ function Get-NetlogonEvent {
                 }
 
                 try {
-                    $Events = Get-WinEvent -FilterHashtable $FilterHash -ComputerName $Computer -MaxEvents $MaxEvents -ErrorAction SilentlyContinue
+                    if ($IsLocal) {
+                        $Events = Get-WinEvent -FilterHashtable $FilterHash -MaxEvents $MaxEvents -ErrorAction SilentlyContinue
+                    }
+                    else {
+                        $Events = Invoke-Command -ComputerName $Computer -ScriptBlock {
+                            param($Filter, $Max)
+                            Get-WinEvent -FilterHashtable $Filter -MaxEvents $Max -ErrorAction SilentlyContinue
+                        } -ArgumentList $FilterHash, $MaxEvents
+                    }
 
                     foreach ($Event in $Events) {
                         $Info = $EventDescriptions[$Event.Id]
@@ -878,42 +887,69 @@ function Get-NetlogonStatus {
                     $Service = Invoke-Command -ComputerName $Computer -ScriptBlock { Get-Service -Name 'Netlogon' } -ErrorAction Stop
                 }
 
-                # Get domain info
+                # Get domain info and run nltest commands
                 $DomainInfo = $null
-                try {
-                    $DomainInfo = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
-                }
-                catch {
-                    Write-Verbose "Could not retrieve domain information: $_"
-                }
-
-                # Run nltest commands for detailed info
                 $SecureChannelResult = $null
                 $DCInfo = $null
                 $TrustedDomains = $null
 
-                try {
-                    $NltestSC = nltest /sc_query:$($DomainInfo.Name) 2>&1
-                    $SecureChannelResult = ($NltestSC | Out-String).Trim()
-                }
-                catch {
-                    $SecureChannelResult = "Failed to query secure channel: $_"
-                }
+                if ($IsLocal) {
+                    try {
+                        $DomainInfo = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
+                    }
+                    catch {
+                        Write-Verbose "Could not retrieve domain information: $_"
+                    }
 
-                try {
-                    $NltestDC = nltest /dsgetdc:$($DomainInfo.Name) 2>&1
-                    $DCInfo = ($NltestDC | Out-String).Trim()
-                }
-                catch {
-                    $DCInfo = "Failed to query DC info: $_"
-                }
+                    try {
+                        $NltestSC = nltest /sc_query:$($DomainInfo.Name) 2>&1
+                        $SecureChannelResult = ($NltestSC | Out-String).Trim()
+                    }
+                    catch {
+                        $SecureChannelResult = "Failed to query secure channel: $_"
+                    }
 
-                try {
-                    $NltestTrusted = nltest /trusted_domains 2>&1
-                    $TrustedDomains = ($NltestTrusted | Out-String).Trim()
+                    try {
+                        $NltestDC = nltest /dsgetdc:$($DomainInfo.Name) 2>&1
+                        $DCInfo = ($NltestDC | Out-String).Trim()
+                    }
+                    catch {
+                        $DCInfo = "Failed to query DC info: $_"
+                    }
+
+                    try {
+                        $NltestTrusted = nltest /trusted_domains 2>&1
+                        $TrustedDomains = ($NltestTrusted | Out-String).Trim()
+                    }
+                    catch {
+                        $TrustedDomains = "Failed to query trusted domains: $_"
+                    }
                 }
-                catch {
-                    $TrustedDomains = "Failed to query trusted domains: $_"
+                else {
+                    try {
+                        $RemoteNltest = Invoke-Command -ComputerName $Computer -ScriptBlock {
+                            $DomName = $null
+                            try {
+                                $DomName = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
+                            } catch { }
+                            $SC = $null; $DC = $null; $TD = $null
+                            if ($DomName) {
+                                try { $SC = (nltest /sc_query:$DomName 2>&1 | Out-String).Trim() } catch { $SC = "Failed: $_" }
+                                try { $DC = (nltest /dsgetdc:$DomName 2>&1 | Out-String).Trim() } catch { $DC = "Failed: $_" }
+                            }
+                            try { $TD = (nltest /trusted_domains 2>&1 | Out-String).Trim() } catch { $TD = "Failed: $_" }
+                            @{ DomainName = $DomName; SC = $SC; DC = $DC; TD = $TD }
+                        }
+                        if ($RemoteNltest.DomainName) {
+                            $DomainInfo = [PSCustomObject]@{ Name = $RemoteNltest.DomainName }
+                        }
+                        $SecureChannelResult = $RemoteNltest.SC
+                        $DCInfo = $RemoteNltest.DC
+                        $TrustedDomains = $RemoteNltest.TD
+                    }
+                    catch {
+                        Write-Warning "Failed to run nltest on $Computer via remoting: $_"
+                    }
                 }
 
                 # Parse secure channel status
@@ -946,7 +982,14 @@ function Get-NetlogonStatus {
                 # Test secure channel via PowerShell
                 $SecureChannelTest = $null
                 try {
-                    $SecureChannelTest = Test-ComputerSecureChannel -ErrorAction SilentlyContinue
+                    if ($IsLocal) {
+                        $SecureChannelTest = Test-ComputerSecureChannel -ErrorAction SilentlyContinue
+                    }
+                    else {
+                        $SecureChannelTest = Invoke-Command -ComputerName $Computer -ScriptBlock {
+                            Test-ComputerSecureChannel -ErrorAction SilentlyContinue
+                        }
+                    }
                 }
                 catch {
                     Write-Verbose "Test-ComputerSecureChannel failed: $_"
@@ -1134,18 +1177,49 @@ function Test-NetlogonSecureChannel {
                     }
                 }
                 else {
-                    # Remote test via nltest
+                    # Remote test via Invoke-Command (runs directly on the target machine)
                     try {
-                        $NltestOutput = nltest /server:$Computer /sc_query:* 2>&1 | Out-String
-                        $Result.NltestResult = $NltestOutput.Trim()
-                        $Result.SecureChannelOK = $NltestOutput -match 'NERR_Success'
+                        $RemoteResult = Invoke-Command -ComputerName $Computer -ScriptBlock {
+                            $SCTest = $false
+                            $NlOutput = $null
+                            try {
+                                $SCTest = Test-ComputerSecureChannel -ErrorAction Stop
+                            }
+                            catch {
+                                $SCTest = $false
+                            }
+                            try {
+                                $DomName = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
+                                $NlOutput = nltest /sc_verify:$DomName 2>&1 | Out-String
+                            }
+                            catch {
+                                $NlOutput = "nltest failed: $_"
+                            }
+                            @{
+                                SecureChannelOK = $SCTest
+                                NltestResult    = $NlOutput
+                            }
+                        }
+                        $Result.SecureChannelOK = $RemoteResult.SecureChannelOK
+                        $Result.NltestResult = if ($RemoteResult.NltestResult) { $RemoteResult.NltestResult.Trim() } else { $null }
 
-                        if ($NltestOutput -match 'Trusted DC Name\s*\\\\(\S+)') {
+                        if ($Result.NltestResult -match 'Trusted DC Name\s*\\\\(\S+)') {
                             $Result.DCName = $Matches[1]
                         }
                     }
                     catch {
-                        $Result.NltestResult = "Remote nltest failed: $_"
+                        $Result.NltestResult = "Remote test failed: $_"
+                    }
+
+                    # Build recommendations for broken remote channel
+                    if (-not $Result.SecureChannelOK) {
+                        $Result.Recommendations = @(
+                            'Run on the remote computer: Test-ComputerSecureChannel -Repair -Credential (Get-Credential)'
+                            'If repair fails, rejoin the domain: Remove-Computer then Add-Computer'
+                            'Check AD replication: repadmin /replsummary'
+                            'Verify the computer account is not disabled in AD'
+                            'Check time synchronization (w32tm /query /status)'
+                        )
                     }
                 }
 
@@ -1731,8 +1805,8 @@ function Get-DCLocatorInfo {
             }
             else {
                 $Output = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                    param($Args)
-                    & nltest @Args 2>&1 | Out-String
+                    param([string[]]$NltestArgList)
+                    & nltest @NltestArgList 2>&1 | Out-String
                 } -ArgumentList (, $NltestArgs)
             }
 

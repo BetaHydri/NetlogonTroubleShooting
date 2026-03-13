@@ -104,57 +104,62 @@ Describe 'Get-NetlogonEvent' {
     Context 'When Netlogon events exist' {
 
         BeforeAll {
-            # Mock Get-WinEvent to return fake 5719 and 5805 events
+            $Script:MockEvents = @(
+                [PSCustomObject]@{
+                    Id               = 5719
+                    TimeCreated      = [datetime]'2026-03-11 08:15:32'
+                    LevelDisplayName = 'Error'
+                    Message          = 'This computer was not able to set up a secure session with a domain controller in domain CONTOSO.'
+                    ProviderName     = 'NETLOGON'
+                },
+                [PSCustomObject]@{
+                    Id               = 5805
+                    TimeCreated      = [datetime]'2026-03-11 09:20:00'
+                    LevelDisplayName = 'Error'
+                    Message          = 'The session setup from the computer SERVER02 failed to authenticate.'
+                    ProviderName     = 'NETLOGON'
+                }
+            )
+            # Mock Get-WinEvent for local path
             Mock -ModuleName NetlogonTroubleShooting -CommandName Get-WinEvent {
-                @(
-                    [PSCustomObject]@{
-                        Id               = 5719
-                        TimeCreated      = [datetime]'2026-03-11 08:15:32'
-                        LevelDisplayName = 'Error'
-                        Message          = 'This computer was not able to set up a secure session with a domain controller in domain CONTOSO.'
-                        ProviderName     = 'NETLOGON'
-                    },
-                    [PSCustomObject]@{
-                        Id               = 5805
-                        TimeCreated      = [datetime]'2026-03-11 09:20:00'
-                        LevelDisplayName = 'Error'
-                        Message          = 'The session setup from the computer SERVER02 failed to authenticate.'
-                        ProviderName     = 'NETLOGON'
-                    }
-                )
+                $Script:MockEvents
+            }
+            # Mock Invoke-Command for remote path (returns the same fake events)
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Invoke-Command {
+                $Script:MockEvents
             }
         }
 
         It 'Should return event objects' {
-            $Results = Get-NetlogonEvent -ComputerName 'DC01'
+            $Results = Get-NetlogonEvent -ComputerName $env:COMPUTERNAME
             $Results | Should -Not -BeNullOrEmpty
         }
 
         It 'Should include EventId property' {
-            $Results = Get-NetlogonEvent -ComputerName 'DC01'
+            $Results = Get-NetlogonEvent -ComputerName $env:COMPUTERNAME
             $Results[0].EventId | Should -BeIn @(5719, 5805)
         }
 
         It 'Should include a human-readable Summary for event 5719' {
-            $Results = Get-NetlogonEvent -ComputerName 'DC01'
+            $Results = Get-NetlogonEvent -ComputerName $env:COMPUTERNAME
             $Evt5719 = $Results | Where-Object { $_.EventId -eq 5719 } | Select-Object -First 1
             $Evt5719.Summary | Should -Be 'No Domain Controller available for secure session setup'
         }
 
         It 'Should include a human-readable Summary for event 5805' {
-            $Results = Get-NetlogonEvent -ComputerName 'DC01'
+            $Results = Get-NetlogonEvent -ComputerName $env:COMPUTERNAME
             $Evt5805 = $Results | Where-Object { $_.EventId -eq 5805 } | Select-Object -First 1
             $Evt5805.Summary | Should -Be 'Machine account authentication failure'
         }
 
         It 'Should include Action guidance' {
-            $Results = Get-NetlogonEvent -ComputerName 'DC01'
+            $Results = Get-NetlogonEvent -ComputerName $env:COMPUTERNAME
             $Results[0].Action | Should -Not -BeNullOrEmpty
         }
 
         It 'Should set the correct ComputerName' {
-            $Results = Get-NetlogonEvent -ComputerName 'DC01'
-            $Results[0].ComputerName | Should -Be 'DC01'
+            $Results = Get-NetlogonEvent -ComputerName $env:COMPUTERNAME
+            $Results[0].ComputerName | Should -Be $env:COMPUTERNAME
         }
     }
 

@@ -2055,24 +2055,37 @@ function Get-ADSiteInfo {
                     Write-Verbose "nltest /dsgetsite failed: $_"
                 }
 
+                # Determine if the site was assigned via a proper subnet match or via DC fallback
+                $SubnetMapped = $false
+                if ($AssignedSite -and $SiteSubnets.Count -gt 0 -and $ClientIP) {
+                    $SubnetMapped = $true
+                }
+
                 [PSCustomObject]@{
-                    PSTypeName   = 'NetlogonTroubleShooting.SiteInfo'
-                    ComputerName = $Computer
-                    ClientIP     = $ClientIP
-                    AssignedSite = if ($AssignedSite) { $AssignedSite } else { 'NO_CLIENT_SITE' }
-                    NltestSite   = $NltestSite
-                    NoClientSite = $NoClientSite
-                    Subnets      = $SiteSubnets -join '; '
-                    SubnetCount  = $SiteSubnets.Count
-                    DCs          = $SiteDCs -join '; '
-                    DCCount      = $SiteDCs.Count
-                    SiteLinks    = $SiteLinks -join '; '
+                    PSTypeName       = 'NetlogonTroubleShooting.SiteInfo'
+                    ComputerName     = $Computer
+                    ClientIP         = $ClientIP
+                    AssignedSite     = if ($AssignedSite) { $AssignedSite } else { 'NO_CLIENT_SITE' }
+                    NltestSite       = $NltestSite
+                    NoClientSite     = $NoClientSite
+                    SubnetMapped     = $SubnetMapped
+                    Subnets          = $SiteSubnets -join '; '
+                    SubnetCount      = $SiteSubnets.Count
+                    DCs              = $SiteDCs -join '; '
+                    DCCount          = $SiteDCs.Count
+                    SiteLinks        = $SiteLinks -join '; '
                 }
 
                 # Console feedback
                 if ($NoClientSite) {
                     Write-Host "$Computer : NO_CLIENT_SITE detected! The computer IP ($ClientIP) does not match any AD subnet." -ForegroundColor Red
                     Write-Host "  Create a subnet in AD Sites and Services covering this IP range." -ForegroundColor Yellow
+                }
+                elseif (-not $SubnetMapped) {
+                    Write-Host "$Computer : Site '$AssignedSite' (DC fallback — no subnets defined!). $($SiteDCs.Count) DCs." -ForegroundColor Yellow
+                    Write-Host "  WARNING: The site was assigned by the DC as a fallback, not by subnet mapping." -ForegroundColor Yellow
+                    Write-Host "  In a multi-site environment, clients may authenticate to the wrong DC." -ForegroundColor Yellow
+                    Write-Host "  Create a subnet in AD Sites and Services covering the $ClientIP range." -ForegroundColor Yellow
                 }
                 else {
                     Write-Host "$Computer : Site '$AssignedSite' ($($SiteDCs.Count) DCs, $($SiteSubnets.Count) subnets)." -ForegroundColor Green
@@ -2386,6 +2399,7 @@ function _Format-DiagnosticText {
         $null = $Sb.AppendLine("  Assigned Site  : $($SI.AssignedSite)")
         $null = $Sb.AppendLine("  Client IP      : $($SI.ClientIP)")
         $null = $Sb.AppendLine("  NO_CLIENT_SITE : $(if ($SI.NoClientSite) { 'YES — action required!' } else { 'No' })")
+        $null = $Sb.AppendLine("  Subnet Mapped  : $(if ($SI.SubnetMapped) { 'Yes' } elseif ($SI.NoClientSite) { 'No' } else { 'No — site assigned via DC fallback (no subnets defined)' })")
         $null = $Sb.AppendLine("  Subnets ($($SI.SubnetCount)): $($SI.Subnets)")
         $null = $Sb.AppendLine("  DCs ($($SI.DCCount))    : $($SI.DCs)")
         $null = $Sb.AppendLine("  Site Links     : $($SI.SiteLinks)")
@@ -2539,11 +2553,12 @@ function _Format-DiagnosticHtml {
     $SI = $Report['SiteInfo']
     $null = $Sb.AppendLine('<div class="section"><h2>AD Site Information</h2>')
     if ($SI -is [PSObject] -and $SI.AssignedSite) {
-        $SiteClass = if ($SI.NoClientSite) { 'fail' } else { 'ok' }
+        $SiteClass = if ($SI.NoClientSite) { 'fail' } elseif (-not $SI.SubnetMapped) { 'warn' } else { 'ok' }
         $null = $Sb.AppendLine("<table><tr><th>Property</th><th>Value</th></tr>")
-        $null = $Sb.AppendLine("<tr><td>Assigned Site</td><td class='$SiteClass'>$([System.Net.WebUtility]::HtmlEncode($SI.AssignedSite))</td></tr>")
+        $null = $Sb.AppendLine("<tr><td>Assigned Site</td><td class='$SiteClass'>$([System.Net.WebUtility]::HtmlEncode($SI.AssignedSite))$(if (-not $SI.SubnetMapped -and -not $SI.NoClientSite) { ' (DC fallback)' })</td></tr>")
         $null = $Sb.AppendLine("<tr><td>Client IP</td><td>$([System.Net.WebUtility]::HtmlEncode($SI.ClientIP))</td></tr>")
-        $null = $Sb.AppendLine("<tr><td>Subnets</td><td>$([System.Net.WebUtility]::HtmlEncode($SI.Subnets))</td></tr>")
+        $SubnetClass = if ($SI.SubnetCount -eq 0) { 'warn' } else { 'ok' }
+        $null = $Sb.AppendLine("<tr><td>Subnets</td><td class='$SubnetClass'>$(if ($SI.SubnetCount -eq 0) { 'None defined — create subnets in AD Sites and Services' } else { [System.Net.WebUtility]::HtmlEncode($SI.Subnets) })</td></tr>")
         $null = $Sb.AppendLine("<tr><td>DCs in Site</td><td>$([System.Net.WebUtility]::HtmlEncode($SI.DCs))</td></tr>")
         $null = $Sb.AppendLine("<tr><td>Site Links</td><td>$([System.Net.WebUtility]::HtmlEncode($SI.SiteLinks))</td></tr>")
         $null = $Sb.AppendLine("</table>")

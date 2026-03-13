@@ -1114,8 +1114,8 @@ Describe 'Invoke-NetlogonDiagnostic' {
 
         It 'Should only accept Text or HTML for OutputFormat' {
             $ValidValues = (Get-Command Invoke-NetlogonDiagnostic).Parameters['OutputFormat'].Attributes |
-                           Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] } |
-                           Select-Object -ExpandProperty ValidValues
+            Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] } |
+            Select-Object -ExpandProperty ValidValues
             $ValidValues | Should -Contain 'Text'
             $ValidValues | Should -Contain 'HTML'
         }
@@ -1130,13 +1130,13 @@ Describe 'Invoke-NetlogonDiagnostic' {
             }
             Mock -ModuleName NetlogonTroubleShooting -CommandName Get-NetlogonStatus {
                 [PSCustomObject]@{
-                    ServiceStatus       = 'Running'
-                    ServiceStartType    = 'Automatic'
-                    DomainName          = 'contoso.com'
-                    AuthenticatingDC    = 'DC01.contoso.com'
+                    ServiceStatus        = 'Running'
+                    ServiceStartType     = 'Automatic'
+                    DomainName           = 'contoso.com'
+                    AuthenticatingDC     = 'DC01.contoso.com'
                     SecureChannelHealthy = $true
-                    DebugLoggingEnabled = $false
-                    DebugLevel          = 'Disabled'
+                    DebugLoggingEnabled  = $false
+                    DebugLevel           = 'Disabled'
                 }
             }
             Mock -ModuleName NetlogonTroubleShooting -CommandName Test-NetlogonSecureChannel {

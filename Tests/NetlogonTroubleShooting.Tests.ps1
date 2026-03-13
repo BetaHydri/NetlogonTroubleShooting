@@ -169,14 +169,17 @@ Describe 'Get-NetlogonEvent' {
             Mock -ModuleName NetlogonTroubleShooting -CommandName Get-WinEvent {
                 throw [System.Exception]::new('No events were found that match the specified selection criteria.')
             }
+            Mock -ModuleName NetlogonTroubleShooting -CommandName Invoke-Command {
+                throw [System.Exception]::new('No events were found that match the specified selection criteria.')
+            }
         }
 
         It 'Should not throw' {
-            { Get-NetlogonEvent -ComputerName 'CLEAN01' } | Should -Not -Throw
+            { Get-NetlogonEvent -ComputerName $env:COMPUTERNAME } | Should -Not -Throw
         }
 
         It 'Should return no results' {
-            $Results = Get-NetlogonEvent -ComputerName 'CLEAN01'
+            $Results = Get-NetlogonEvent -ComputerName $env:COMPUTERNAME
             $Results | Should -BeNullOrEmpty
         }
     }
